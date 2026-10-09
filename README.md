@@ -9,7 +9,8 @@
 
 ```bash
 uv sync
-uv run ruff check . && uv run ruff format --check .
+uv run ruff check . && uv run ruff format --check . && uv run ty check
+uv run pytest
 ```
 
 ## Подготовка КТРУ
@@ -114,6 +115,11 @@ uv run python scripts/dataloader.py \
   --final-only \
   --limit 1
 ```
+
+## Контракты между модулями
+
+Типы данных и сигнатуры шагов пайплайна лежат в `contracts/`, описание в
+`contracts/README.md`.
 
 ## Документы
 

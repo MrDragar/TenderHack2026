@@ -16,6 +16,9 @@ htmlcov/
 build/
 dist/
 *.egg-info/
+# Рабочие заметки, в репозиторий не идут.
+docs/HANDOFF.md
+docs/team-plan.md
 .claude/settings.local.json
 .~lock.*#
 ~$*
