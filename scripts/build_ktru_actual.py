@@ -303,7 +303,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Собирает рабочий справочник КТРУ для одежды, мебели и инструментов."
     )
-    parser.add_argument("--input", type=Path, default=Path("КТРУ_raw"))
+    parser.add_argument("--input", type=Path, default=Path("data/raw/Казань 2026/КТРУ/КТРУ"))
     parser.add_argument(
         "--output",
         type=Path,
