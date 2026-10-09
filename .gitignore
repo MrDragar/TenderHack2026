@@ -1,11 +1,21 @@
 # Данные организаторов публиковать нельзя (п. 6.17 положения).
-data/
+/data/
+/КТРУ_raw/
+/outputs/
 
-docs/HANDOFF.md
 .venv/
 __pycache__/
+*.py[cod]
 .pytest_cache/
 .ruff_cache/
+.coverage
+htmlcov/
+.idea/
+.vscode/
+.DS_Store
+build/
+dist/
+*.egg-info/
 .claude/settings.local.json
 .~lock.*#
 ~$*
