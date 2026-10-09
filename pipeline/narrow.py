@@ -3,6 +3,7 @@ from contracts.ref import Position, Range, Value
 
 
 def narrow(candidates: Candidates, chars: list[FoundChar], ref: list[Position]) -> Result:
+    """Отсеивает коды по найденным значениям и решает: код, вопрос или «не нашли»."""
     by_code = {p["code"]: p for p in ref}
     left = [by_code[c["code"]] for c in candidates["candidates"]]
     steps: list[Step] = [first_step(left)]
@@ -35,6 +36,7 @@ def first_step(left: list[Position]) -> Step:
 
 
 def missing_required(left: list[Position], chars: list[FoundChar]) -> list[str]:
+    """Обязательные характеристики первого оставшегося кода, которых нет в тексте."""
     if not left:
         return []
     found_names = {c["name"] for c in chars}
@@ -46,6 +48,7 @@ def missing_required(left: list[Position], chars: list[FoundChar]) -> list[str]:
 
 
 def fits(position: Position, found: FoundChar) -> bool:
+    """Код отпадает, только если характеристика у него неизменяемая и значение не подходит."""
     for char in position["characteristics"]:
         if char["name"] == found["name"] and char["selection"] == "fixed":
             return any(matches(found["value"], v) for v in char["values"])
@@ -53,6 +56,7 @@ def fits(position: Position, found: FoundChar) -> bool:
 
 
 def matches(value: str | int | float, allowed: Value) -> bool:
+    """Текст сравниваем без регистра, число с точным числом КТРУ или диапазоном."""
     if isinstance(value, str) or isinstance(allowed, str):
         return str(value).casefold() == str(allowed).casefold()
     if not isinstance(allowed, dict):
@@ -77,7 +81,7 @@ def below_max(value: int | float, allowed: Range) -> bool:
 
 
 def ask(left: list[Position]) -> Question:
-    # Спрашиваем неизменяемую характеристику, сильнее всего делящую оставшиеся коды.
+    """Вопрос про неизменяемую характеристику, сильнее всего делящую оставшиеся коды."""
     options: dict[str, set[str]] = {}
     for position in left:
         for char in position["characteristics"]:
@@ -91,6 +95,7 @@ def ask(left: list[Position]) -> Question:
 
 
 def show(value: Value) -> str:
+    """Значение КТРУ для человека, диапазон как «≥ 16 < 20»."""
     if not isinstance(value, dict):
         return str(value)
     parts = []

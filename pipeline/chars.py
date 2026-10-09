@@ -1,4 +1,5 @@
 import re
+from typing import TypedDict
 
 from contracts.pipeline import Candidates, FoundChar
 from contracts.ref import Characteristic, Portal, Position
@@ -30,9 +31,20 @@ SCALE = {
     "166": ("mass", 1000),
 }
 NUMBER = re.compile(
-    r"(\d+(?:[.,]\d+)?)\s*(" + "|".join(sorted(UNIT_ALIASES, key=len, reverse=True)) + r")\b",
+    r"(?P<number>\d+(?:[.,]\d+)?)\s*(?P<unit>"
+    + "|".join(sorted(UNIT_ALIASES, key=len, reverse=True))
+    + r")\b",
     re.IGNORECASE,
 )
+
+
+class Match(TypedDict):
+    char: str
+    value: str
+    start: int
+    end: int
+    value_words: int
+    name_words: int
 
 
 def extract(
@@ -46,67 +58,137 @@ def extract(
 
 
 def text_values(text: str, chars: list[Characteristic]) -> list[FoundChar]:
-    tokens = words(text)
-    text_stems = {s for _, _, s in tokens}
-    # Фрагмент текста -> лучшие пары (характеристика, значение) для него.
-    matches: dict[tuple[int, int], list[tuple[int, int, str, str]]] = {}
+    """Текстовые значения КТРУ из текста: «деревянный» → Тип каркаса: Деревянный."""
+    best: dict[str, Match] = {}
+    for match in best_per_fragment(find_matches(text, chars)):
+        kept = best.get(match["char"])
+        # Из двух значений одной характеристики берём более полное: «Металл хромированный».
+        if kept is None or match["value_words"] > kept["value_words"]:
+            best[match["char"]] = match
+
+    found: list[FoundChar] = []
+    for match in best.values():
+        fragment = text[match["start"] : match["end"]]
+        found.append(
+            {
+                "name": match["char"],
+                "value": match["value"],
+                "unit": None,
+                "source": "ktru",
+                "fragment": fragment,
+            }
+        )
+    return found
+
+
+def find_matches(text: str, chars: list[Characteristic]) -> list[Match]:
+    """Все значения кандидатов, каждое слово которых есть в тексте, без выбора."""
+    text_words = words(text)
+    text_stems = {word["stem"] for word in text_words}
+    matches: list[Match] = []
     for char in chars:
+        name_words = len(stems(char["name"]) & text_stems)
         for value in char["values"]:
             if not isinstance(value, str) or value == "Нет":
                 continue
-            # «Да» ищем по названию: «из натуральной кожи» значит «Натуральная кожа: Да».
-            value_stems = stems(char["name"] if value == "Да" else value)
-            hit = [t for t in tokens if t[2] in value_stems]
-            if not value_stems or {t[2] for t in hit} != value_stems:
+            wanted = stems(searched_text(char, value))
+            hits = [word for word in text_words if word["stem"] in wanted]
+            if not wanted or {word["stem"] for word in hits} != wanted:
                 continue
-            span = (min(t[0] for t in hit), max(t[1] for t in hit))
-            name_hits = len(stems(char["name"]) & text_stems)
-            matches.setdefault(span, []).append((len(value_stems), name_hits, char["name"], value))
+            matches.append(
+                {
+                    "char": char["name"],
+                    "value": value,
+                    "start": min(word["start"] for word in hits),
+                    "end": max(word["end"] for word in hits),
+                    "value_words": len(wanted),
+                    "name_words": name_words,
+                }
+            )
+    return matches
 
-    best: dict[str, tuple[int, FoundChar]] = {}
-    for span, options in matches.items():
-        top = max((size, name_hits) for size, name_hits, _, _ in options)
-        for size, name_hits, name, value in options:
-            if (size, name_hits) != top or best.get(name, (0,))[0] >= size:
-                continue
-            found: FoundChar = {
-                "name": name,
-                "value": value,
-                "unit": None,
-                "source": "ktru",
-                "fragment": text[span[0] : span[1]],
-            }
-            best[name] = (size, found)
-    return [found for _, found in best.values()]
+
+def searched_text(char: Characteristic, value: str) -> str:
+    """«Да» ищем по названию: «из натуральной кожи» значит «Натуральная кожа: Да»."""
+    if value == "Да":
+        return char["name"]
+    return value
+
+
+def best_per_fragment(matches: list[Match]) -> list[Match]:
+    """Кусок текста одной характеристике: «ЛДСП» у столешницы, если она есть в тексте."""
+    by_fragment: dict[tuple[int, int], list[Match]] = {}
+    for match in matches:
+        by_fragment.setdefault((match["start"], match["end"]), []).append(match)
+
+    kept = []
+    for group in by_fragment.values():
+        top = max(strength(match) for match in group)
+        for match in group:
+            if strength(match) == top:
+                kept.append(match)
+    return kept
+
+
+def strength(match: Match) -> tuple[int, int]:
+    """Сначала полнота значения, затем сколько слов названия характеристики есть в тексте."""
+    return match["value_words"], match["name_words"]
 
 
 def number_values(text: str, chars: list[Characteristic]) -> list[FoundChar]:
-    numeric = {c["name"]: c for c in chars if c["type"] == "number" and "unit" in c}
+    """Числа с единицей в единице КТРУ: «2,2 см» → Толщина столешницы 22 мм."""
+    numeric = {}
+    for char in chars:
+        if char["type"] == "number" and "unit" in char:
+            numeric[char["name"]] = char
+
     found: list[FoundChar] = []
-    for m in NUMBER.finditer(text):
-        unit_code = UNIT_ALIASES[m[2].lower()]
-        dimension, factor = scale(unit_code)
-        options = [c for c in numeric.values() if scale(c["unit"]["code"])[0] == dimension]
+    for match in NUMBER.finditer(text):
+        unit_code = UNIT_ALIASES[match["unit"].lower()]
         # Какой характеристике принадлежит число, решают слова перед ним до запятой.
-        before = stems(re.split(r"[,;\n]", text[: m.start()])[-1])
-        scored = [(len(stems(c["name"]) & before), c) for c in options]
-        if not scored:
-            continue
-        hits, char = max(scored, key=lambda pair: pair[0])
-        if hits == 0 and len(scored) > 1:
+        clause = re.split(r"[,;\n]", text[: match.start()])[-1]
+        char = owner(list(numeric.values()), unit_code, stems(clause))
+        if char is None:
             continue
         unit = char["unit"]
-        value = float(m[1].replace(",", ".")) * factor / scale(unit["code"])[1]
+        number = float(match["number"].replace(",", "."))
+        value = convert(number, unit_code, unit["code"])
         found.append(
             {
                 "name": char["name"],
                 "value": int(value) if value.is_integer() else round(value, 3),
                 "unit": unit,
                 "source": "ktru",
-                "fragment": m[0],
+                "fragment": match[0],
             }
         )
     return found
+
+
+def owner(
+    chars: list[Characteristic], unit_code: str, clause_stems: set[str]
+) -> Characteristic | None:
+    """Характеристика той же величины, чьё название ближе к словам перед числом."""
+    dimension = scale(unit_code)[0]
+    best = None
+    best_hits = 0
+    same_dimension = 0
+    for char in chars:
+        if scale(char["unit"]["code"])[0] != dimension:
+            continue
+        same_dimension += 1
+        hits = len(stems(char["name"]) & clause_stems)
+        if best is None or hits > best_hits:
+            best = char
+            best_hits = hits
+    # Без подсказки в тексте угадываем, только если выбора нет.
+    if best_hits == 0 and same_dimension > 1:
+        return None
+    return best
+
+
+def convert(number: float, from_code: str, to_code: str) -> float:
+    return number * scale(from_code)[1] / scale(to_code)[1]
 
 
 def scale(unit_code: str) -> tuple[str, float]:
