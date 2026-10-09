@@ -121,6 +121,24 @@ uv run python scripts/dataloader.py \
 Типы данных и сигнатуры шагов пайплайна лежат в `contracts/`, описание в
 `contracts/README.md`.
 
+## Пайплайн
+
+Шаги лежат в `pipeline/`: `candidates.py` (кандидаты), `chars.py` (характеристики),
+`narrow.py` (сужение и решение), `run.py` (соединяет шаги). Веб и замер вызывают
+`run` из `pipeline/run.py`:
+
+```python
+from pipeline.run import run
+
+result = run("Стол письменный деревянный, столешница ЛДСП 22 мм")
+```
+
+Из командной строки, результат печатается как JSON:
+
+```bash
+uv run python -m pipeline.run "Стол письменный деревянный, столешница ЛДСП 22 мм"
+```
+
 ## Документы
 
 - docs/task.md — задача, критерии, ограничения, что сдаём
