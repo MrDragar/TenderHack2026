@@ -1,0 +1,11 @@
+# Данные организаторов публиковать нельзя (п. 6.17 положения).
+data/
+
+docs/HANDOFF.md
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.claude/settings.local.json
+.~lock.*#
+~$*

@@ -1,0 +1,29 @@
+{
+  "includeCoAuthoredBy": false,
+  "permissions": {
+    "defaultMode": "plan",
+    "deny": [
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Read(.env)",
+      "Edit(.env)"
+    ],
+    "ask": [
+      "Bash(docker *)",
+      "Bash(git reset *)",
+      "Bash(git checkout *)",
+      "Bash(git restore *)",
+      "Bash(rm *)"
+    ],
+    "allow": [
+      "Bash(ruff check *)",
+      "Bash(ruff format *)",
+      "Bash(pytest *)",
+      "Bash(uv sync)",
+      "Bash(uv lock)",
+      "Bash(git status)",
+      "Bash(git diff *)",
+      "Bash(git log *)"
+    ]
+  }
+}
