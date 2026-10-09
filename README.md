@@ -124,8 +124,9 @@ uv run python scripts/dataloader.py \
 ## Пайплайн
 
 Шаги лежат в `pipeline/`: `candidates.py` (кандидаты), `chars.py` (характеристики),
-`narrow.py` (сужение и решение), `run.py` (соединяет шаги). Веб и замер вызывают
-`run` из `pipeline/run.py`:
+`narrow.py` (сужение и решение), `run.py` (соединяет шаги), общий разбор текста на
+слова в `text.py`. `run` читает `data/processed/ktru.json`, поэтому сначала соберите
+справочник. Веб и замер вызывают `run` из `pipeline/run.py`:
 
 ```python
 from pipeline.run import run

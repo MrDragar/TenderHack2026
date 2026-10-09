@@ -3,6 +3,8 @@ import json
 from datetime import date
 from pathlib import Path
 
+from contracts.ref import Position
+
 DEFAULT_DATA_PATH = Path("data/processed/ktru.json")
 CATEGORIES = ("clothing", "furniture", "tools")
 
@@ -13,7 +15,7 @@ def load_data(
     expected_date: date | None = None,
     category: str | None = None,
     final_only: bool = False,
-) -> list[dict]:
+) -> list[Position]:
     with path.open(encoding="utf-8") as source:
         payload = json.load(source)
 
