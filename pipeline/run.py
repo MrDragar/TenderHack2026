@@ -7,6 +7,7 @@ from contracts.pipeline import (
     Extract,
     FindCandidates,
     FindSection,
+    Leftover,
     Link,
     Narrow,
     Remark,
@@ -20,6 +21,7 @@ from pipeline.link import link
 from pipeline.narrow import narrow
 from pipeline.section import find_section
 from pipeline.text import correct, stems, unknown, vocabulary, words
+from pipeline.trash import trash
 from scripts.dataloader import DEFAULT_PORTAL_PATH, load_data, load_portal
 
 
@@ -67,8 +69,14 @@ def solve(
         "remarks": name_fixes(text, found, taken) + remarks(chars),
         "candidates": narrowed["candidates"],
         "options": narrowed["options"],
-        "unknown": unknown(text, taken, known(found, ref)),
+        "unknown": leftovers(text, taken, known(found, ref)),
     }
+
+
+def leftovers(text: str, taken: list[tuple[int, int]], known: set[str]) -> list[Leftover]:
+    """Остаток описания размечаем мусор/не мусор: мусор просим поправить, остальное смотрит
+    модератор."""
+    return [{"text": word, "trash": trash(word)} for word in unknown(text, taken, known)]
 
 
 def name_fixes(text: str, found: list[Candidate], taken: list[tuple[int, int]]) -> list[Remark]:
