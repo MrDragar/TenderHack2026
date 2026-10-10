@@ -1,38 +1,72 @@
-import json
+import httpx
+import pytest
 
-import web.server
-from web.server import answer
+import web.backend.main
+from web.backend.main import app
 
-
-def request(text: str) -> bytes:
-    return json.dumps({"text": text}).encode()
-
-
-def test_empty_text():
-    assert answer(request("   ")) == (400, {"error": "Опишите товар"})
+pytestmark = pytest.mark.anyio
 
 
-def test_no_text_field():
-    assert answer(b"{}")[0] == 400
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
 
 
-def test_broken_json():
-    assert answer(b"not json")[0] == 400
-    assert answer(b"[1, 2]")[0] == 400
+async def post(**kwargs):
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        return await client.post("/api/run", **kwargs)
 
 
-def test_too_long():
-    assert answer(request("а" * 1001)) == (400, {"error": "Слишком длинное описание"})
+async def request(text: str):
+    return await post(json={"text": text})
 
 
-def test_pipeline_crash(monkeypatch):
+async def test_empty_text():
+    response = await request("   ")
+    assert response.status_code == 400
+    assert response.json() == {"error": "Опишите товар"}
+
+
+async def test_no_text_field():
+    response = await post(json={})
+    assert response.status_code == 400
+    assert response.json() == {"error": "Опишите товар"}
+
+
+async def test_broken_json():
+    response = await post(
+        content=b"not json",
+        headers={"Content-Type": "application/json"},
+    )
+    assert response.status_code == 400
+    assert response.json() == {"error": "Опишите товар"}
+
+
+async def test_wrong_json_shape():
+    response = await post(json=[1, 2])
+    assert response.status_code == 400
+    assert response.json() == {"error": "Опишите товар"}
+
+
+async def test_too_long():
+    response = await request("а" * 1001)
+    assert response.status_code == 400
+    assert response.json() == {"error": "Слишком длинное описание"}
+
+
+async def test_pipeline_crash(monkeypatch):
     def boom(text):
         raise RuntimeError(text)
 
-    monkeypatch.setattr(web.server, "run", boom)
-    assert answer(request("стол")) == (500, {"error": "Не удалось разобрать описание"})
+    monkeypatch.setattr(web.backend.main, "run", boom)
+    response = await request("стол")
+    assert response.status_code == 500
+    assert response.json() == {"error": "Не удалось разобрать описание"}
 
 
-def test_passes_stripped_text(monkeypatch):
-    monkeypatch.setattr(web.server, "run", lambda text: {"text": text})
-    assert answer(request("  стол  ")) == (200, {"text": "стол"})
+async def test_passes_stripped_text(monkeypatch):
+    monkeypatch.setattr(web.backend.main, "run", lambda text: {"text": text})
+    response = await request("  стол  ")
+    assert response.status_code == 200
+    assert response.json() == {"text": "стол"}

@@ -182,23 +182,23 @@ scripts/generate.py, его проверка scripts/calibrate.py, метрик�
 
 
 ## Сервис и запуск
-- Сервер web/server.py на стандартной библиотеке: POST /api/run, статика страницы.
-  Пайплайн в том же процессе, справочник грузится при старте.
-- Страница web/static: HTML, CSS, JS без сборки, в стиле UI-кита портала.
-- Docker: один контейнер, data/ монтируется томом, справочник собирается при старте,
-  если его нет.
+- Backend web/backend/main.py на FastAPI: POST /api/run. Пайплайн работает в том же
+  процессе, справочник грузится при старте.
+- Frontend web/frontend на React и Vite, в стиле UI-кита портала. В контейнере статику
+  раздаёт Nginx и перенаправляет `/api` в backend.
+- Docker Compose запускает два контейнера. data/ монтируется в backend только для чтения.
 
 Запуск для жюри:
 1. Положить архив организаторов в data/raw.
 2. docker compose up --build.
-3. Открыть http://localhost:8000.
+3. Открыть http://localhost:3000.
 
 
 ## Репозиторий в конце
 
 ```
 README.md                 запуск, схема, почему без LLM
-docker-compose.yml, Dockerfile
+docker-compose.yml        запуск frontend и backend
 pyproject.toml, uv.lock
 
 contracts/                типы между этапами и API
@@ -211,8 +211,8 @@ pipeline/
   run.py                  соединяет этапы
   text.py  values.py      общая нормализация текста и значений
 web/
-  server.py
-  static/                 страница
+  backend/                FastAPI и Dockerfile
+  frontend/               React, Vite, Nginx и Dockerfile
 scripts/
   build_ktru_actual.py    архив КТРУ → справочник
   build_portal.py         лист 2 выгрузок → характеристики разделов
