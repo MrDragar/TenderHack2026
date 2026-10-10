@@ -2,10 +2,12 @@ import argparse
 import json
 from datetime import date
 from pathlib import Path
+from typing import cast
 
-from contracts.ref import Position
+from contracts.ref import Portal, Position
 
 DEFAULT_DATA_PATH = Path("data/processed/ktru.json")
+DEFAULT_PORTAL_PATH = Path("data/processed/portal.json")
 CATEGORIES = ("clothing", "furniture", "tools")
 
 
@@ -35,6 +37,38 @@ def load_data(
         if (category is None or position["category"] == category)
         and (not final_only or position["position_type"] == "final")
     ]
+
+
+def load_portal(path: Path = DEFAULT_PORTAL_PATH) -> Portal:
+    with path.open(encoding="utf-8") as source:
+        payload = json.load(source)
+
+    if not isinstance(payload, dict) or not payload:
+        raise ValueError("Файл портала должен содержать категории")
+    for category, characteristics in payload.items():
+        if not isinstance(category, str) or not category:
+            raise ValueError("Название категории портала должно быть непустой строкой")
+        if not isinstance(characteristics, list):
+            raise ValueError(f"Характеристики {category} должны быть массивом")
+        for characteristic in characteristics:
+            if not isinstance(characteristic, dict) or set(characteristic) != {
+                "name",
+                "type",
+                "unit",
+                "values",
+            }:
+                raise ValueError(f"Некорректная характеристика портала в {category}")
+            if not isinstance(characteristic["name"], str) or not characteristic["name"]:
+                raise ValueError(f"У характеристики {category} нет названия")
+            if not isinstance(characteristic["type"], str) or not characteristic["type"]:
+                raise ValueError(f"У характеристики {characteristic['name']} нет типа")
+            if characteristic["unit"] is not None and not isinstance(characteristic["unit"], str):
+                raise ValueError(f"Некорректная единица у {characteristic['name']}")
+            if not isinstance(characteristic["values"], list) or not all(
+                isinstance(value, str) and value for value in characteristic["values"]
+            ):
+                raise ValueError(f"Некорректные значения у {characteristic['name']}")
+    return cast(Portal, payload)
 
 
 def parse_args() -> argparse.Namespace:

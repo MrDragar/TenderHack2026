@@ -3,8 +3,11 @@ from xml.etree import ElementTree
 
 from scripts.build_ktru_actual import (
     category_for,
+    code_suffix,
     is_applicable,
     normalize_characteristic,
+    position_name_key,
+    position_rank,
 )
 
 
@@ -71,3 +74,18 @@ def test_normalize_characteristic_produces_numeric_range():
         "max": 150,
         "max_inclusive": False,
     }
+
+
+def test_position_name_is_the_only_group_key():
+    assert position_name_key("  Пассатижи  ") == position_name_key("пассатижи")
+    assert code_suffix("25.73.30.163-00000017") == 17
+    assert code_suffix("99.99.99.999-00000018") == 18
+
+
+def test_latest_final_position_wins_by_numeric_code_suffix():
+    old = position_rank("25.73.30.163-00000009", "final", "100")
+    latest = position_rank("99.99.99.999-00000018", "final", "1")
+    parent = position_rank("25.73.30.163-00000019", "template", "999")
+
+    assert latest > old
+    assert latest > parent

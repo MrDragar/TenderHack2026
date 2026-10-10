@@ -30,14 +30,33 @@ def natural_key(value: str) -> list[int | str]:
     return [int(part) if part.isdigit() else part for part in re.split(r"(\d+)", value)]
 
 
-def version_key(value: str | None) -> tuple[tuple[int, int | str], ...]:
+def version_key(value: str | None) -> tuple[tuple[int, str], ...]:
     if not value:
         return ()
     return tuple(
-        (0, int(part)) if part.isdigit() else (1, part)
+        (0, f"{int(part):050d}") if part.isdigit() else (1, part)
         for part in re.split(r"(\d+)", value)
         if part
     )
+
+
+def code_suffix(code: str) -> int:
+    suffix = code.rsplit("-", 1)[-1]
+    if not suffix.isdigit():
+        raise ValueError(f"В коде КТРУ нет числового суффикса: {code}")
+    return int(suffix)
+
+
+def position_name_key(name: str) -> str:
+    return " ".join(name.split()).casefold()
+
+
+def position_rank(
+    code: str,
+    position_type: str,
+    version: str | None,
+) -> tuple[bool, int, tuple[tuple[int, str], ...], str]:
+    return position_type == "final", code_suffix(code), version_key(version), code
 
 
 def child(element: ElementTree.Element | None, name: str) -> ElementTree.Element | None:
@@ -242,7 +261,7 @@ def build(
         )
     effective_date = as_of or data_date
     selected: dict[str, dict] = {}
-    selected_versions: dict[str, tuple] = {}
+    selected_ranks: dict[str, tuple] = {}
     input_positions = 0
 
     for archive_path, member in source_files:
@@ -254,14 +273,19 @@ def build(
             name = text(data, "name")
             if data is None or category is None or not is_applicable(data, effective_date):
                 continue
-            if not is_product(name):
+            if name is None or not is_product(name):
                 continue
             normalized = normalize_position(data, category)
             code = normalized["code"]
-            candidate_version = version_key(text(data, "version"))
-            if code not in selected or candidate_version > selected_versions[code]:
-                selected[code] = normalized
-                selected_versions[code] = candidate_version
+            name_key = position_name_key(name)
+            candidate_rank = position_rank(
+                code,
+                normalized["position_type"],
+                text(data, "version"),
+            )
+            if name_key not in selected or candidate_rank > selected_ranks[name_key]:
+                selected[name_key] = normalized
+                selected_ranks[name_key] = candidate_rank
 
     output_positions = sorted(
         selected.values(),
