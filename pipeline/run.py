@@ -7,6 +7,8 @@ from contracts.pipeline import (
     Extract,
     FindCandidates,
     FindSection,
+    FoundChar,
+    Judge,
     Leftover,
     Link,
     Narrow,
@@ -21,7 +23,7 @@ from pipeline.link import link
 from pipeline.narrow import narrow
 from pipeline.section import find_section
 from pipeline.text import correct, stems, unknown, vocabulary, words
-from pipeline.trash import trash
+from pipeline.trash import judge
 from scripts.dataloader import DEFAULT_PORTAL_PATH, load_data, load_portal
 
 
@@ -51,13 +53,17 @@ def solve(
     extract: Extract = extract,
     link: Link = link,
     narrow: Narrow = narrow,
+    judge: Judge = judge,
 ) -> Result:
     """Этапы подменяются вариантом или эталоном, так замер сравнивает их по отдельности."""
     found = find(text, ref)
     section = find_section(text, sections)
-    chars = link(extract(text), found, section, ref, sections)
+    linked = link(extract(text), found, section, ref, sections)
+    taken = [(char["start"], char["end"]) for char in linked]
+    chars, left = checked(
+        linked, unknown(text, taken, known(found, ref)), product(found, section), judge
+    )
     narrowed = narrow(found, chars, ref)
-    taken = [(char["start"], char["end"]) for char in chars]
     return {
         "category": narrowed["category"],
         "section": section,
@@ -69,14 +75,40 @@ def solve(
         "remarks": name_fixes(text, found, taken) + remarks(chars),
         "candidates": narrowed["candidates"],
         "options": narrowed["options"],
-        "unknown": leftovers(text, taken, known(found, ref)),
+        "unknown": left,
     }
 
 
-def leftovers(text: str, taken: list[tuple[int, int]], known: set[str]) -> list[Leftover]:
-    """Остаток описания размечаем мусор/не мусор: мусор просим поправить, остальное смотрит
-    модератор."""
-    return [{"text": word, "trash": trash(word)} for word in unknown(text, taken, known)]
+def checked(
+    chars: list[FoundChar], rest: list[str], product: str, judge: Judge
+) -> tuple[list[FoundChar], list[Leftover]]:
+    """Новые характеристики и остаток текста проверяем на мусор одним вызовом модели. Мусор
+    не создаём: он уходит в остаток с объяснением, что поправить."""
+    new = [char for char in chars if char["source"] == "new"]
+    checks = judge([char["fragment"] for char in new] + rest, product)
+    by_char = {id(char): check for char, check in zip(new, checks[: len(new)], strict=True)}
+    kept: list[FoundChar] = []
+    left: list[Leftover] = []
+    for char in chars:
+        check = by_char.get(id(char))
+        if check is None:
+            kept.append(char)
+        elif check["verdict"] == "trash":
+            left.append({"text": char["fragment"], "check": check})
+        else:
+            char["check"] = check
+            char["name"] = check["name"] or char["name"]
+            kept.append(char)
+    for word, check in zip(rest, checks[len(new) :], strict=True):
+        left.append({"text": word, "check": check})
+    return kept, left
+
+
+def product(found: list[Candidate], section: str | None) -> str:
+    """Посылка для модели: без вида товара «размер 42» не отличить от мусора."""
+    if found:
+        return found[0]["name"]
+    return section or "Товар"
 
 
 def name_fixes(text: str, found: list[Candidate], taken: list[tuple[int, int]]) -> list[Remark]:

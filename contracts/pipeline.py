@@ -1,5 +1,5 @@
 from collections.abc import Callable
-from typing import Literal, TypedDict
+from typing import Literal, NotRequired, TypedDict
 
 from contracts.ref import Category, Portal, Position, Unit
 
@@ -16,6 +16,18 @@ type FixKind = Literal[
 
 
 type Rule = Literal["pair", "value", "number", "gold"]
+
+type Verdict = Literal["property", "unsure", "trash"]
+
+
+class Check(TypedDict):
+    """Свойство товара или мусор. unsure решает модератор. score это вероятность свойства
+    по модели, None, если решили без неё. name это единое название из памяти модератора."""
+
+    verdict: Verdict
+    why: str
+    score: float | None
+    name: str | None
 
 
 class Fragment(TypedDict):
@@ -41,6 +53,7 @@ class FoundChar(TypedDict):
     fix: str | None
     kind: FixKind | None
     rule: Rule
+    check: NotRequired[Check]
 
 
 class Step(TypedDict):
@@ -72,12 +85,21 @@ class Narrowed(TypedDict):
 
 
 class Leftover(TypedDict):
-    """Кусок описания, который не стал ни товаром, ни характеристикой. trash=True это мусор
-    (объявления, контакты, не наш язык) и человеку надо поправить; иначе это похоже на
-    настоящую характеристику, которую мы не разобрали, и её смотрит модератор."""
+    """Кусок описания, который не стал ни товаром, ни характеристикой, либо новая
+    характеристика, признанная мусором."""
 
     text: str
-    trash: bool
+    check: Check
+
+
+class Decision(TypedDict):
+    """Решение модератора о новой характеристике. name это единое название: повторное
+    свойство потом ложится в него."""
+
+    told: str
+    name: str
+    product: str
+    approved: bool
 
 
 class Result(Narrowed):
@@ -95,3 +117,6 @@ type Link = Callable[
 ]
 type Narrow = Callable[[list[Candidate], list[FoundChar], list[Position]], Narrowed]
 type Run = Callable[[str], Result]
+type Judge = Callable[[list[str], str], list[Check]]
+# Вероятность, что из посылки следует гипотеза, для каждой пары.
+type Entail = Callable[[list[tuple[str, str]]], list[float]]

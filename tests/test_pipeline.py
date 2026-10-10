@@ -1,9 +1,10 @@
-from contracts.pipeline import Result
+from contracts.pipeline import Check, Decision, Result
 from contracts.ref import Characteristic, Portal, Position
 from pipeline.candidates import find
 from pipeline.extract import extract
 from pipeline.run import solve
 from pipeline.section import find_section
+from pipeline.trash import NOT_PROPERTY, verdicts
 
 TOP: Characteristic = {
     "code": "top",
@@ -52,8 +53,28 @@ PORTAL: Portal = {
 }
 
 
-def run(text: str, portal: Portal | None = None) -> Result:
-    return solve(text, REF, portal or {})
+def no_model(told: list[str], product: str) -> list[Check]:
+    return verdicts(told, product, [], None)
+
+
+def run(text: str, portal: Portal | None = None, judge=no_model) -> Result:
+    return solve(text, REF, portal or {}, judge=judge)
+
+
+def model_against(*trash: str):
+    """Модель, которая считает мусором куски с этими словами, остальное свойством."""
+
+    def entail(pairs: list[tuple[str, str]]) -> list[float]:
+        found = []
+        for premise, hypothesis in pairs:
+            bad = any(word in premise.casefold() for word in trash)
+            found.append(0.9 if bad == (hypothesis == NOT_PROPERTY) else 0.05)
+        return found
+
+    def judge(told: list[str], product: str) -> list[Check]:
+        return verdicts(told, product, [], entail)
+
+    return judge
 
 
 def test_full_description_gives_one_code():
@@ -178,18 +199,47 @@ def test_told_values_do_not_change_candidates():
 
 
 def test_leftover_ad_is_marked_trash():
-    result = run("Стол письменный деревянный, продам срочно")
+    result = run("Стол письменный деревянный, продам срочно", judge=model_against("продам"))
 
-    leftover = {u["text"].casefold(): u["trash"] for u in result["unknown"]}
-    assert leftover["продам"] is True
-    assert leftover["срочно"] is True
+    leftover = {u["text"].casefold(): u["check"]["verdict"] for u in result["unknown"]}
+    assert leftover == {"продам": "trash", "срочно": "property"}
 
 
-def test_plausible_leftover_goes_to_moderator():
+def test_leftover_without_model_goes_to_moderator():
     result = run("Стол письменный деревянный, с ящиком")
 
-    leftover = {u["text"].casefold(): u["trash"] for u in result["unknown"]}
-    assert leftover["ящиком"] is False
+    assert [(u["text"], u["check"]["verdict"]) for u in result["unknown"]] == [
+        ("ящиком", "unsure")
+    ]
+
+
+def test_trash_new_char_is_not_created():
+    result = run("Стол письменный, Звоните: завтра, Тип ножек: хром", judge=model_against("звон"))
+
+    assert [c["name"] for c in result["chars"]] == ["Тип ножек"]
+    assert result["chars"][0]["check"]["verdict"] == "property"
+    assert [u["text"] for u in result["unknown"]] == ["Звоните: завтра"]
+
+
+def test_contact_new_char_is_trash_even_without_model():
+    result = run("Стол письменный, Телефон: +7 999 111 22 33")
+
+    assert result["chars"] == []
+    assert result["unknown"][0]["check"]["verdict"] == "trash"
+
+
+def test_approved_new_char_takes_unified_name():
+    memory: list[Decision] = [
+        {"told": "Ножки", "name": "Материал ножек", "product": "Стол", "approved": True}
+    ]
+
+    def judge(told: list[str], product: str) -> list[Check]:
+        return verdicts(told, product, memory, None)
+
+    result = run("Стол письменный, Ножки: хром", judge=judge)
+
+    assert result["chars"][0]["name"] == "Материал ножек"
+    assert result["chars"][0]["value"] == "хром"
 
 
 def test_section_by_name_and_none_when_unknown():
