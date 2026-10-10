@@ -6,12 +6,13 @@ from typing import TypedDict
 
 from openpyxl import load_workbook
 
-from contracts.pipeline import Candidate, FoundChar, Fragment, Narrowed
+from contracts.pipeline import Candidate, FindCandidates, FoundChar, Fragment, Narrowed
 from contracts.ref import Portal, Position
 from pipeline.candidates import find
 from pipeline.extract import NUMBER, extract
 from pipeline.link import link
 from pipeline.narrow import narrow
+from pipeline.run import solve
 from pipeline.section import find_section
 from pipeline.values import same, show
 from scripts.generate import (
@@ -56,10 +57,11 @@ def share(part: int, total: int) -> str:
 
 def stage1(generated: list[Generated], ref: list[Position]) -> Stage:
     """Соседние коды одного шаблона называются одинаково, их различает сужение, а не этап 1.
-    Поэтому ранг считаем по шаблонам."""
+    Поэтому ранг считаем по названиям шаблонов: у шести шаблонов КТРУ название общее."""
     by_code = {p["code"]: p for p in ref}
     metrics: dict[str, Number] = {}
     failures: list[Failure] = []
+    right: dict[int, bool] = {}
     for label, part in split(generated):
         top1 = 0
         top5 = 0
@@ -69,21 +71,16 @@ def stage1(generated: list[Generated], ref: list[Position]) -> Stage:
         for example in part:
             candidates = find(example["text"], ref)
             sizes += len(candidates)
-            found = templates(candidates, by_code)
-            gold = template_of(example["code"], by_code)
+            found = template_names(candidates, by_code)
+            gold = named(template_of(example["code"], by_code), by_code)
             place = found.index(gold) + 1 if gold in found else None
+            right[id(example)] = place == 1
             if place is not None:
                 top1 += place == 1
                 top5 += place <= 5
                 reciprocal += 1 / place
             if place != 1:
-                failures.append(
-                    {
-                        "text": example["text"],
-                        "expected": named(gold, by_code),
-                        "got": listed([named(code, by_code) for code in found]),
-                    }
-                )
+                failures.append({"text": example["text"], "expected": gold, "got": listed(found)})
             first = by_code[candidates[0]["code"]]["category"] if candidates else None
             category += first == by_code[example["code"]]["category"]
         total = len(part)
@@ -92,7 +89,31 @@ def stage1(generated: list[Generated], ref: list[Position]) -> Stage:
         metrics[f"{label}: MRR"] = reciprocal / total if total else 0.0
         metrics[f"{label}: категория"] = (category, total)
         metrics[f"{label}: кандидатов в среднем"] = sizes / total if total else 0.0
+    metrics.update(by_tag(generated, [right[id(e)] for e in generated], "шаблон в топ-1"))
     return {"key": "stage1", "title": "1. Позиция КТРУ", "metrics": metrics, "failures": failures}
+
+
+def template_names(candidates: list[Candidate], by_code: dict[str, Position]) -> list[str]:
+    found: list[str] = []
+    for template in templates(candidates, by_code):
+        name = named(template, by_code)
+        if name not in found:
+            found.append(name)
+    return found
+
+
+def by_tag(generated: list[Generated], right: list[bool], what: str) -> dict[str, Number]:
+    """Каждая порча и форма записи отдельно: видно, на чём именно этап ошибается."""
+    counts: dict[str, list[int]] = {}
+    for example, ok in zip(generated, right, strict=True):
+        for tag in example["tags"]:
+            pair = counts.setdefault(tag, [0, 0])
+            pair[0] += ok
+            pair[1] += 1
+    metrics: dict[str, Number] = {}
+    for tag in sorted(counts):
+        metrics[f"{what}, {tag}"] = (counts[tag][0], counts[tag][1])
+    return metrics
 
 
 def templates(candidates: list[Candidate], by_code: dict[str, Position]) -> list[str]:
@@ -269,6 +290,7 @@ def stage4(generated: list[Generated], by_code: dict[str, Position], ref: list[P
     clean = 0
     by_kind: dict[str, list[int]] = {}
     failures: list[Failure] = []
+    right_examples = []
     for example in generated:
         position = by_code[example["code"]]
         candidates = siblings(position, by_code)
@@ -299,6 +321,7 @@ def stage4(generated: list[Generated], by_code: dict[str, Position], ref: list[P
             counts = by_kind.setdefault(char["kind"], [0, 0])
             counts[0] += hit
             counts[1] += 1
+        right_examples.append(not bad)
         if bad:
             wanted = [described(c["name"], c["value"], c.get("kind")) for c in example["chars"]]
             got_all = [described(f["name"], f["value"], f["kind"], f["rule"]) for f in found]
@@ -316,9 +339,45 @@ def stage4(generated: list[Generated], by_code: dict[str, Position], ref: list[P
     }
     for kind, (hit, total) in by_kind.items():
         metrics[f"порча {kind}: исправлено"] = (hit, total)
+    metrics["пример верен целиком"] = (sum(right_examples), len(generated))
+    metrics.update(by_tag(generated, right_examples, "пример верен"))
     return {
         "key": "stage4",
         "title": "4. Привязка и унификация",
+        "metrics": metrics,
+        "failures": failures,
+    }
+
+
+def stage34(
+    generated: list[Generated], by_code: dict[str, Position], ref: list[Position], portal: Portal
+) -> Stage:
+    """Извлечение и привязка вместе на синтетике: числа словами, габариты и диапазоны
+    видны только так, на правильных кусках их уже разобрал генератор. Правки не судим."""
+    right = []
+    failures: list[Failure] = []
+    for example in generated:
+        candidates = siblings(by_code[example["code"]], by_code)
+        result = solve(example["text"], ref, portal, find=given(candidates))
+        found = [char for char in result["chars"] if char["source"] == "ktru"]
+        names = {char["name"] for char in example["chars"]}
+        missed = []
+        for char in example["chars"]:
+            if not any(
+                f["name"] == char["name"] and same(f["value"], char["value"]) for f in found
+            ):
+                missed.append(described(char["name"], char["value"]))
+        extra = [described(f["name"], f["value"]) for f in found if f["name"] not in names]
+        right.append(not missed and not extra)
+        if missed or extra:
+            got = [described(f["name"], f["value"], f["rule"]) for f in found]
+            wanted = "; ".join(missed) or "ничего лишнего"
+            failures.append({"text": example["text"], "expected": wanted, "got": listed(got, 99)})
+    metrics: dict[str, Number] = {"пример верен целиком": (sum(right), len(generated))}
+    metrics.update(by_tag(generated, right, "пример верен"))
+    return {
+        "key": "stage34",
+        "title": "3–4. Извлечение и привязка вместе",
         "metrics": metrics,
         "failures": failures,
     }
@@ -339,6 +398,13 @@ def unit_ok(found: FoundChar, position: Position) -> bool:
         if char["name"] == found["name"] and "unit" in char:
             return found["unit"] is not None and found["unit"]["code"] == char["unit"]["code"]
     return found["unit"] is None
+
+
+def given(candidates: list[Candidate]) -> FindCandidates:
+    def find_given(text: str, ref: list[Position]) -> list[Candidate]:
+        return candidates
+
+    return find_given
 
 
 def stage5(generated: list[Generated], by_code: dict[str, Position], ref: list[Position]) -> Stage:
@@ -439,7 +505,11 @@ def stages(ref: list[Position], portal: Portal, with_products: bool = True) -> l
     found = [stage1(generated, ref), stage2(section_texts(portal, SECTIONS), portal)]
     if with_products and portal and RAW_DIR.exists():
         found.append(stage3(products(portal_names(portal))))
-    found += [stage4(generated, by_code, ref), stage5(generated, by_code, ref)]
+    found += [
+        stage4(generated, by_code, ref),
+        stage34(generated, by_code, ref, portal),
+        stage5(generated, by_code, ref),
+    ]
     return found
 
 

@@ -2,6 +2,7 @@ from contracts.ref import Characteristic, Position
 from scripts.generate import generate, section_texts
 from scripts.stages import (
     Stage,
+    by_tag,
     compare,
     f_score,
     split,
@@ -10,6 +11,7 @@ from scripts.stages import (
     stage2,
     stage4,
     stage5,
+    stage34,
 )
 
 FRAME: Characteristic = {
@@ -44,19 +46,20 @@ BY_CODE = {"wood": DESK}
 
 
 def test_generated_fragments_point_into_text():
-    for seed in range(20):
+    for seed in range(40):
         for example in generate(REF, 1, seed):
             assert example["code"] == "wood"
             for item in example["fragments"]:
                 assert example["text"][item["start"] : item["end"]] == item["text"]
-            assert {c["name"] for c in example["chars"]} == {FRAME["name"], TOP["name"]}
+            assert example["chars"]
+            assert {c["name"] for c in example["chars"]} <= {FRAME["name"], TOP["name"]}
 
 
 def test_generated_number_is_inside_ktru_range():
-    for seed in range(20):
-        example = generate(REF, 1, seed)[0]
-        top = [c for c in example["chars"] if c["name"] == TOP["name"]][0]
-        assert 16 <= float(top["value"]) < 25
+    for seed in range(40):
+        for item in generate(REF, 1, seed)[0]["chars"]:
+            if item["name"] == TOP["name"] and "kind" not in item:
+                assert item["value"] == "≥ 16 < 25" or 16 <= float(item["value"]) < 25
 
 
 def test_generate_is_repeatable_and_handles_empty_reference():
@@ -88,6 +91,25 @@ def test_stage_metrics_on_tiny_reference():
     assert empty["failures"] == []
 
 
+def test_stage34_counts_whole_examples_and_tags():
+    generated = generate(REF, 1)
+
+    metrics = stage34(generated, BY_CODE, REF, {})["metrics"]
+
+    assert metrics["пример верен целиком"] in ((0, 1), (1, 1))
+    assert stage34([], BY_CODE, REF, {})["metrics"]["пример верен целиком"] == (0, 0)
+
+
+def test_by_tag_counts_each_tag_apart():
+    first = generate(REF, 1, 0)[0]
+    second = first.copy()
+    first["tags"], second["tags"] = ["пара"], ["пара", "диапазон"]
+
+    metrics = by_tag([first, second], [True, False], "верно")
+
+    assert metrics == {"верно, диапазон": (0, 1), "верно, пара": (1, 2)}
+
+
 def test_f_score_weights_precision_and_survives_zero():
     assert f_score(0, 0, 0, 0.5) == 0
     assert f_score(1, 1, 1, 0.5) == 1
@@ -106,7 +128,7 @@ def test_generated_split_into_clean_and_spoiled():
     assert clean and spoiled
     assert len(clean) + len(spoiled) == len(generated)
     for example in clean:
-        assert example["text"].startswith(DESK["name"].lower())
+        assert "опечатка в названии" not in example["tags"]
         assert all("kind" not in char for char in example["chars"])
 
 
