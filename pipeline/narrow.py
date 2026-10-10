@@ -1,7 +1,7 @@
 from collections import Counter
 from math import log2
 
-from contracts.pipeline import Candidates, FoundChar, Question, Remark, Result, Step
+from contracts.pipeline import Candidate, FoundChar, Question, Remark, Result, Step
 from contracts.ref import Position
 from pipeline.values import matches, show
 
@@ -9,10 +9,11 @@ CATEGORY_NAMES = {"clothing": "Одежда", "furniture": "Мебель", "tool
 SHOWN = 4
 
 
-def narrow(candidates: Candidates, chars: list[FoundChar], ref: list[Position]) -> Result:
+def narrow(candidates: list[Candidate], chars: list[FoundChar], ref: list[Position]) -> Result:
     """Отсеивает коды по найденным значениям и решает: код, вопрос или «не нашли»."""
     by_code = {p["code"]: p for p in ref}
-    left = [by_code[c["code"]] for c in candidates["candidates"]]
+    left = [by_code[c["code"]] for c in candidates]
+    category = left[0]["category"] if left else None
     steps = funnel(left, ref)
     for found in chars:
         kept = [p for p in left if fits(p, found)]
@@ -28,7 +29,8 @@ def narrow(candidates: Candidates, chars: list[FoundChar], ref: list[Position]) 
         left = kept
 
     return {
-        "category": candidates["category"],
+        "category": category,
+        "section": None,
         "steps": steps,
         "chars": chars,
         "code": left[0]["code"] if len(left) == 1 else None,

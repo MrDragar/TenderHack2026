@@ -3,10 +3,11 @@ from typing import Literal
 from contracts.eval import ExpectedChar, GoldExample
 from contracts.pipeline import FoundChar, Question, Result
 from contracts.ref import Position
+from pipeline.extract import extract
 from scripts.measure import (
     check_chars,
-    gold_extract,
     gold_find,
+    gold_link,
     is_right,
     rank,
     report,
@@ -55,6 +56,7 @@ def found(name: str, value: str | int | float) -> FoundChar:
 def result(code: str | None, question: Question | None = None) -> Result:
     return {
         "category": "furniture",
+        "section": None,
         "steps": [],
         "chars": [],
         "code": code,
@@ -183,23 +185,24 @@ def test_gold_candidates_are_final_codes_of_same_template():
 
     found = gold_find(gold("Стол", "desk-metal", []), by_code)("Стол", [])
 
-    assert [c["code"] for c in found["candidates"]] == ["desk-wood", "desk-metal"]
-    assert [c["score"] for c in found["candidates"]] == [0.5, 0.5]
+    assert [c["code"] for c in found] == ["desk-wood", "desk-metal"]
+    assert [c["score"] for c in found] == [0.5, 0.5]
 
 
 def test_gold_candidates_are_empty_for_product_outside_ktru():
     found = gold_find(gold("Рулетка", None, []), BY_CODE)("Рулетка", [])
 
-    assert found == {"category": None, "candidates": []}
+    assert found == []
 
 
 def test_gold_chars_add_values_from_replies_only():
     example = gold("Стол офисный", "desk-metal", [{"name": "Высота", "value": 750}])
     candidates = gold_find(example, BY_CODE)(example["text"], [])
-    told = gold_extract(example)
+    told = gold_link(example)
 
-    first = told(example["text"], candidates, [DESK], {})
-    after_reply = told(f"{example['text']}. Тип каркаса: Металлический", candidates, [DESK], {})
+    first = told(extract(example["text"]), candidates, None, [DESK], {})
+    replied = extract(f"{example['text']}, Тип каркаса: Металлический")
+    after_reply = told(replied, candidates, None, [DESK], {})
 
     assert [(c["name"], c["value"]) for c in first] == [("Высота", 750)]
     assert [(c["name"], c["value"]) for c in after_reply] == [

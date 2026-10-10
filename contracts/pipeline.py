@@ -10,14 +10,20 @@ class Candidate(TypedDict):
     score: float
 
 
-class Candidates(TypedDict):
-    category: Category | None
-    candidates: list[Candidate]
-
-
 type FixKind = Literal[
     "typo", "layout", "unit", "wrong_unit", "out_of_range", "not_in_list", "conflict"
 ]
+
+
+class Fragment(TypedDict):
+    form: Literal["pair", "number", "words"]
+    name: str | None
+    value: str
+    text: str
+    number: float | None
+    unit: str | None
+    start: int
+    end: int
 
 
 class FoundChar(TypedDict):
@@ -53,6 +59,7 @@ class Remark(TypedDict):
 
 class Result(TypedDict):
     category: Category | None
+    section: str | None
     steps: list[Step]
     chars: list[FoundChar]
     code: str | None
@@ -64,7 +71,11 @@ class Result(TypedDict):
     unknown: list[str]
 
 
-type FindCandidates = Callable[[str, list[Position]], Candidates]
-type ExtractChars = Callable[[str, Candidates, list[Position], Portal], list[FoundChar]]
-type Narrow = Callable[[Candidates, list[FoundChar], list[Position]], Result]
+type FindCandidates = Callable[[str, list[Position]], list[Candidate]]
+type FindSection = Callable[[str, Portal], str | None]
+type Extract = Callable[[str], list[Fragment]]
+type Link = Callable[
+    [list[Fragment], list[Candidate], str | None, list[Position], Portal], list[FoundChar]
+]
+type Narrow = Callable[[list[Candidate], list[FoundChar], list[Position]], Result]
 type Run = Callable[[str], Result]

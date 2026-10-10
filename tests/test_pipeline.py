@@ -1,7 +1,9 @@
-from contracts.ref import Characteristic, Position
+from contracts.ref import Characteristic, Portal, Position
 from pipeline.candidates import find
-from pipeline.chars import extract
+from pipeline.extract import extract
+from pipeline.link import link
 from pipeline.narrow import narrow
+from pipeline.section import find_section
 
 TOP: Characteristic = {
     "code": "top",
@@ -39,11 +41,21 @@ def desk(code: str, frame: str) -> Position:
 
 
 REF = [desk("wood", "Деревянный"), desk("metal", "Металлический")]
+PORTAL: Portal = {
+    "Столы письменные": [
+        {"name": "Цвет", "type": "Справочник", "unit": None, "values": ["3022 красная", "Красный"]},
+        {"name": "Вес", "type": "Дробное числовое значение", "unit": "(кг)", "values": []},
+        {"name": "Вид стола", "type": "Справочник", "unit": None, "values": ["Письменный"]},
+        {"name": "Размер", "type": "Справочник", "unit": None, "values": ["Размер 9, l"]},
+    ],
+    "Стулья": [],
+}
 
 
-def run(text: str):
+def run(text: str, portal: Portal | None = None):
     candidates = find(text, REF)
-    return narrow(candidates, extract(text, candidates, REF, {}), REF)
+    section = find_section(text, portal or {})
+    return narrow(candidates, link(extract(text), candidates, section, REF, portal or {}), REF)
 
 
 def test_full_description_gives_one_code():
@@ -126,7 +138,7 @@ def test_value_as_is_gives_no_remark():
 
 
 def test_candidate_scores_sum_to_one():
-    candidates = find("письменного стола", REF)["candidates"]
+    candidates = find("письменного стола", REF)
 
     assert [c["score"] for c in candidates] == [0.5, 0.5]
 
@@ -156,3 +168,67 @@ def test_told_values_do_not_change_candidates():
     told = find("Стол письменный, Тип каркаса: Металлический", REF)
 
     assert told == plain
+
+
+def test_section_by_name_and_none_when_unknown():
+    assert find_section("стол письменный деревянный", PORTAL) == "Столы письменные"
+    assert find_section("шины летние", PORTAL) is None
+    assert find_section("", PORTAL) is None
+    assert find_section("стол письменный", {}) is None
+
+
+def test_extract_forms_without_reference():
+    fragments = extract("Стол деревянный, столешница 2,2 см, высота метр десять, Цвет: белый")
+
+    assert [(f["form"], f["name"], f["text"]) for f in fragments] == [
+        ("words", None, "Стол деревянный"),
+        ("words", None, "столешница 2,2 см"),
+        ("number", "столешница", "2,2 см"),
+        ("words", None, "высота метр десять"),
+        ("number", "высота", "метр десять"),
+        ("pair", "Цвет", "Цвет: белый"),
+    ]
+    assert (fragments[2]["number"], fragments[2]["unit"]) == (2.2, "004")
+    assert (fragments[4]["number"], fragments[4]["unit"]) == (1.1, "006")
+    assert fragments[5]["value"] == "белый"
+
+
+def test_extract_empty_text():
+    assert extract("") == []
+    assert extract(" , ;") == []
+
+
+def test_portal_value_when_ktru_has_no_such_char():
+    result = run("Стол письменный деревянный, цвет красный, вес 500 г", PORTAL)
+
+    by_name = {c["name"]: c for c in result["chars"]}
+    assert by_name["Цвет"]["source"] == "portal"
+    assert by_name["Цвет"]["value"] == "Красный"
+    assert by_name["Вес"]["value"] == 0.5
+    assert by_name["Вес"]["kind"] == "unit"
+    assert not by_name["Вес"]["required"]
+
+
+def test_product_words_and_bare_name_do_not_give_portal_chars():
+    result = run("Стол письменный деревянный, размер большой", PORTAL)
+
+    assert {c["name"] for c in result["chars"]} == {"Тип каркаса"}
+
+
+def test_ktru_wins_over_portal_with_same_name():
+    portal: Portal = {
+        "Столы письменные": [
+            {"name": "Тип каркаса", "type": "Справочник", "unit": None, "values": ["Деревянный"]}
+        ]
+    }
+
+    result = run("Стол письменный, Тип каркаса: деревянный", portal)
+
+    assert result["chars"][0]["source"] == "ktru"
+
+
+def test_told_portal_char_keeps_free_value():
+    result = run("Стол письменный, Цвет: венге", PORTAL)
+
+    char = result["chars"][0]
+    assert (char["source"], char["value"], char["kind"]) == ("portal", "венге", None)

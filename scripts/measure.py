@@ -8,18 +8,19 @@ from typing import TypedDict
 from contracts.eval import ExpectedChar, GoldExample
 from contracts.pipeline import (
     Candidate,
-    Candidates,
-    ExtractChars,
     FindCandidates,
     FoundChar,
+    Fragment,
+    Link,
     Question,
     Result,
     Run,
 )
 from contracts.ref import Portal, Position
-from pipeline.chars import extract
+from pipeline.link import link
 from pipeline.run import run
 from pipeline.values import show
+from scripts.generate import gold_char, siblings
 
 DEFAULT_GOLD_PATH = Path("data/eval/gold.json")
 MAX_QUESTIONS = 3
@@ -53,7 +54,9 @@ def same(a: str | int | float, b: str | int | float) -> bool:
 
 
 def check_chars(expected: list[ExpectedChar], found: list[FoundChar]) -> Chars:
-    """Эталон перечисляет все характеристики из текста, поэтому найденное сверх него ошибка."""
+    """Эталон перечисляет все характеристики КТРУ из текста, найденное сверх него ошибка.
+    Портал и новые эталон не размечает, их не судим."""
+    found = [f for f in found if f["source"] == "ktru"]
     expected_names = {char["name"] for char in expected}
     chars: Chars = {"ok": 0, "found": len(found), "wrong": [], "missed": []}
     for char in expected:
@@ -259,60 +262,35 @@ def outcome(code: str | None, question: Question | None) -> str:
 def gold_find(example: GoldExample, by_code: dict[str, Position]) -> FindCandidates:
     found = gold_candidates(example, by_code)
 
-    def find(text: str, ref: list[Position]) -> Candidates:
+    def find(text: str, ref: list[Position]) -> list[Candidate]:
         return found
 
     return find
 
 
-def gold_candidates(example: GoldExample, by_code: dict[str, Position]) -> Candidates:
-    """Все конечные коды шаблона эталонного кода: сужению остаётся различить соседей."""
+def gold_candidates(example: GoldExample, by_code: dict[str, Position]) -> list[Candidate]:
     position = by_code.get(example["expected"]["code"] or "")
     if position is None:
-        return {"category": None, "candidates": []}
-    return {"category": position["category"], "candidates": siblings(position, by_code)}
+        return []
+    return siblings(position, by_code)
 
 
-def siblings(position: Position, by_code: dict[str, Position]) -> list[Candidate]:
-    parent = position["parent_code"]
-    if parent is None:
-        family = [position]
-    else:
-        family = []
-        for p in by_code.values():
-            if p["parent_code"] == parent and p["position_type"] == "final":
-                family.append(p)
-    score = 1 / len(family)
-    return [{"code": p["code"], "name": p["name"], "score": score} for p in family]
-
-
-def gold_extract(example: GoldExample) -> ExtractChars:
-    """Эталонные характеристики, а ответы на вопросы, дописанные к тексту, разбирает этап."""
+def gold_link(example: GoldExample) -> Link:
+    """Эталонные характеристики, а ответы на вопросы, дописанные к тексту, привязывает этап."""
     told = [gold_char(char) for char in example["expected"]["chars"]]
 
-    def extract_told(
-        text: str, candidates: Candidates, ref: list[Position], portal: Portal
+    def link_told(
+        fragments: list[Fragment],
+        candidates: list[Candidate],
+        section: str | None,
+        ref: list[Position],
+        portal: Portal,
     ) -> list[FoundChar]:
-        replies = text[len(example["text"]) :]
-        return told + extract(replies, candidates, ref, portal)
+        # Ответ дописан через точку и может войти в один кусок с концом исходного текста.
+        replies = [f for f in fragments if f["end"] > len(example["text"])]
+        return told + link(replies, candidates, section, ref, portal)
 
-    return extract_told
-
-
-def gold_char(char: ExpectedChar) -> FoundChar:
-    value = char["value"]
-    return {
-        "name": char["name"],
-        "value": value,
-        "unit": None,
-        "source": "ktru",
-        "fragment": "",
-        "start": 0,
-        "end": 0,
-        "required": False,
-        "fix": None,
-        "kind": None,
-    }
+    return link_told
 
 
 def ladder(
@@ -326,7 +304,7 @@ def ladder(
     }
     for example in gold:
         find = gold_find(example, by_code)
-        told = gold_extract(example)
+        told = gold_link(example)
         rows["как есть"].append(talk(example, run, find_codes, by_code))
         with_find = talk(example, staged(find), find_codes, by_code)
         rows["эталонные кандидаты"].append(with_find)
@@ -335,15 +313,15 @@ def ladder(
     return rows
 
 
-def staged(find: FindCandidates, extract: ExtractChars = extract) -> Run:
-    return lambda text: run(text, find=find, extract=extract)
+def staged(find: FindCandidates, link: Link = link) -> Run:
+    return lambda text: run(text, find=find, link=link)
 
 
 def stages_report(rows: dict[str, list[Dialog]]) -> str:
     """Каждый этап мерится на эталонном входе, поэтому ошибки соседей его цифры не портят."""
     known = [d for d in rows["как есть"] if d["example"]["expected"]["code"]]
     lines = [
-        "Этапы на эталонном входе",
+        "Ручной эталон, этапы на эталонном входе",
         f"  Кандидаты: {recall_line(known)}",
         f"  Характеристики на эталонных кандидатах: {chars_line(rows['эталонные кандидаты'])}",
         f"  Сужение на эталонных характеристиках: {code_line(rows['и характеристики'])}",
@@ -386,16 +364,20 @@ def load_gold(path: Path = DEFAULT_GOLD_PATH) -> list[GoldExample]:
 
 if __name__ == "__main__":
     from pipeline.candidates import find
-    from pipeline.run import reference
+    from pipeline.run import portal, reference
+    from scripts.stages import report as stages_table
 
     ref = reference()
     by_code = {position["code"]: position for position in ref}
 
     def find_codes(text: str) -> list[str]:
-        return [c["code"] for c in find(text, ref)["candidates"]]
+        return [c["code"] for c in find(text, ref)]
 
-    path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_GOLD_PATH
+    paths = [arg for arg in sys.argv[1:] if not arg.startswith("--")]
+    path = Path(paths[0]) if paths else DEFAULT_GOLD_PATH
     rows = ladder(load_gold(path), find_codes, by_code)
+    print(stages_table(ref, portal(), with_products="--fast" not in sys.argv))
+    print()
     print(stages_report(rows))
     print()
     print(report(rows["как есть"]))

@@ -15,11 +15,12 @@
 | Файл | Что | Кто делает | Кто пользуется |
 |---|---|---|---|
 | ref.py | Position, Characteristic: справочник КТРУ | сборка справочника | все шаги, эталон |
-| ref.py | Portal: характеристики портала | разбор xlsx | шаг характеристик |
-| pipeline.py | Candidates | шаг кандидатов | шаги характеристик и сужения |
-| pipeline.py | FoundChar | шаг характеристик | шаг сужения |
-| pipeline.py | Result | шаг сужения | run, замер, веб |
-| pipeline.py | FindCandidates, ExtractChars, Narrow, Run | | сигнатуры шагов |
+| ref.py | Portal: характеристики портала | сборка листа 2 | этапы 2 и 4 |
+| pipeline.py | list[Candidate] | этап 1 | этапы 4 и 5 |
+| pipeline.py | Fragment | этап 3 | этап 4 |
+| pipeline.py | FoundChar | этап 4 | этап 5 |
+| pipeline.py | Result | этап 5 и run | замер, веб |
+| pipeline.py | FindCandidates, FindSection, Extract, Link, Narrow, Run | | сигнатуры этапов |
 | eval.py | GoldExample | эталонный набор | замер |
 
 ## Справочник КТРУ (ref.py)
@@ -34,25 +35,34 @@
 - unit: одна на характеристику и только у числовых, у 176 числовых её нет.
 - description есть только у 12 позиций.
 
-## Характеристики портала (ref.py, черновик)
+## Характеристики портала (ref.py)
 Portal: ключ это название из колонки «Конечная категория ПП», значение это список её
 характеристик со второго листа xlsx. type это тип значения с портала как есть
 («Справочник», «Текст», «Целое числовое значение» и т. п.).
 
-## Шаги пайплайна (pipeline.py, черновик)
+## Этапы пайплайна (pipeline.py)
+Этапы и зачем так поделено: docs/architecture.md.
 ```
-FindCandidates(text, ref) → Candidates
-ExtractChars(text, candidates, ref, portal) → list[FoundChar]
-Narrow(candidates, chars, ref) → Result
+FindCandidates(text, ref) → list[Candidate]          1. позиция КТРУ
+FindSection(text, portal) → str | None               2. раздел портала
+Extract(text) → list[Fragment]                       3. извлечение
+Link(fragments, candidates, section, ref, portal) → list[FoundChar]   4. привязка
+Narrow(candidates, chars, ref) → Result              5. сужение и вопрос
 Run(text) → Result
 ```
-- Candidates: категория (None, если не определили) и только конечные коды. score это
-  вероятность кода, сумма по кандидатам равна 1.
+- Candidate: только конечные коды. score это вероятность кода, сумма по кандидатам 1.
+  Категории в выходе этапа 1 нет, она следует из позиции.
+- Fragment: кусок текста как написан, без справочника. form "pair" это «Название:
+  значение», "number" это число с единицей (name это слова фразы перед числом), "words"
+  это вся фраза без явной пары, значения без названия ищутся в ней. text это кусок
+  исходного текста от start до end. Куски могут перекрываться: число лежит внутри своей
+  фразы.
 - FoundChar: source "ktru", "portal" или "new". fragment это кусок исходного текста, из
   которого взято значение. fix это найденная порча и почему значение исправлено
   («в КТРУ единица миллиметр, перевели»), None если значение взято как есть. Из fix
-  сужение строит remarks.
+  сужение строит remarks. required только у КТРУ.
 - Result:
+  - section: раздел портала, None если не определили;
   - steps: шаги сужения, left это сколько кодов осталось после шага;
   - code None, если однозначного кода нет, тогда question: какую характеристику спросить
     и варианты ответа;
@@ -61,16 +71,18 @@ Run(text) → Result
 
 Шаг объявляет, что выполняет контракт, при подключении в run:
 ```python
-from contracts.pipeline import FindCandidates
+from contracts.pipeline import FindSection
 
-find_candidates: FindCandidates = candidates.find
+find_section: FindSection = section.find_section
 ```
 Если сигнатура или форма результата не совпадает, ty check упадёт.
 
-## Эталонный набор (eval.py, черновик)
+## Эталонный набор (eval.py)
 GoldExample: текст и ожидаемые категория, код и характеристики. code это товар, который
 имел в виду пользователь, даже если текста мало и без вопроса код не выбрать: замер отвечает
 на вопросы пайплайна значениями этого кода. code None только для товаров, которых нет в КТРУ.
 chars это все характеристики КТРУ, названные в тексте, найденное сверх них считается ошибкой.
+kind у характеристики это порча, которую внёс генератор (scripts/generate.py), в ручном
+эталоне её нет.
 Примеры из выгрузки портала это данные организаторов, такой файл лежит в data/ и в git
 не попадает.

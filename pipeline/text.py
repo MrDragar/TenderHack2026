@@ -3,6 +3,7 @@ from collections.abc import Iterable
 from difflib import get_close_matches
 from typing import Literal, TypedDict
 
+MIN_SHARE = 0.5
 STOP = {"для", "или", "без", "под", "над", "при", "что"}
 LATIN_KEYS = "qwertyuiop[]asdfghjkl;'zxcvbnm,."
 RUSSIAN_KEYS = "йцукенгшщзхъфывапролджэячсмитьбю"
@@ -10,7 +11,11 @@ LAYOUT = str.maketrans(LATIN_KEYS + LATIN_KEYS.upper(), RUSSIAN_KEYS + RUSSIAN_K
 TWINS = str.maketrans("aceopxyABCEHKMOPTX", "асеорхуАВСЕНКМОРТХ")
 LATIN = re.compile(r"[a-z]", re.IGNORECASE)
 CYRILLIC = re.compile(r"[а-яё]", re.IGNORECASE)
-PAIR = re.compile(r"(?:^|(?<=[,;\n]))\s*(?P<name>[^,;\n:]+?)\s*:\s*(?P<value>[^,;\n:]+)")
+# Фраза кончается на запятой, точке с запятой, переносе или точке с пробелом: «2.5» не конец.
+PAIR = re.compile(
+    r"(?:^|(?<=[,;\n])|(?<=\.\s))\s*"
+    r"(?P<name>(?:[^,;\n:.]|\.(?!\s))+?)\s*:\s*(?P<value>(?:[^,;\n:.]|\.(?!\s))+)"
+)
 
 
 class Word(TypedDict):
@@ -100,3 +105,31 @@ def without_pairs(text: str) -> str:
         if text[: match.start()].strip():
             kept = kept[: match.start()] + " " * (match.end() - match.start()) + kept[match.end() :]
     return kept
+
+
+def best_named[T](text: str, items: list[T], names: list[str]) -> list[T]:
+    """Все элементы с лучшим совпадением названия, пусто, если совпало меньше половины слов."""
+    vocab = vocabulary(names)
+    text_stems = {word["stem"] for word in correct(words(without_pairs(text)), vocab)}
+    if not text_stems:
+        return []
+    ranked = []
+    for item, name in zip(items, names, strict=True):
+        name_stems = stems(name)
+        if name_stems:
+            ranked.append((rank(name_stems, text_stems), item))
+    if not ranked:
+        return []
+    best = max(item_rank for item_rank, _ in ranked)
+    if best[0] < MIN_SHARE:
+        return []
+    return [item for item_rank, item in ranked if item_rank == best]
+
+
+def rank(name_stems: set[str], text_stems: set[str]) -> tuple[float, int, int]:
+    """Больше лучше: доля совпавших слов, затем их число, затем меньше лишних в названии."""
+    hits = len(name_stems & text_stems)
+    # Доля от меньшего из двух, чтобы короткий запрос «Перчатки» находил длинные названия.
+    share = hits / min(len(name_stems), len(text_stems))
+    extra = len(name_stems) - hits
+    return share, hits, -extra

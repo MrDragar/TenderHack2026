@@ -87,7 +87,7 @@ function codeFound(code) {
   const missing = last.result.missing_required.length;
   if (missing) {
     const notice = el("div", "notice notice-warn p5");
-    notice.append(`Для карточки не хватает обязательных характеристик: ${missing}. Заполните их в таблице.`);
+    notice.append(`Для СТЕ не хватает обязательных характеристик: ${missing}. Заполните их в таблице.`);
     box.append(notice);
   }
   return box;

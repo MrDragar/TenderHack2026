@@ -1,5 +1,31 @@
 from contracts.ref import Range, Value
 
+UNIT_ALIASES = {
+    "мм": "003",
+    "см": "004",
+    "м": "006",
+    "км": "008",
+    "дюйм": "039",
+    "г": "163",
+    "гр": "163",
+    "кг": "166",
+    "шт": "796",
+    "вт": "212",
+    "в": "222",
+    "ач": "263",
+    "об/мин": "331",
+}
+# Единицы одной величины переводятся друг в друга через множитель к базовой.
+SCALE = {
+    "003": ("length", 1),
+    "004": ("length", 10),
+    "006": ("length", 1000),
+    "008": ("length", 1_000_000),
+    "039": ("length", 25.4),
+    "163": ("mass", 1),
+    "166": ("mass", 1000),
+}
+
 
 def matches(value: str | int | float, allowed: Value) -> bool:
     """Текст сравниваем без регистра, число с точным числом КТРУ или диапазоном."""
@@ -54,3 +80,15 @@ def show(value: Value) -> str:
         sign = "≤" if value.get("max_inclusive") else "<"
         parts.append(f"{sign} {show(value['max'])}")
     return " ".join(parts)
+
+
+def convert(number: float, from_code: str, to_code: str) -> float:
+    return number * scale(from_code)[1] / scale(to_code)[1]
+
+
+def scale(unit_code: str) -> tuple[str, float]:
+    return SCALE.get(unit_code, (unit_code, 1))
+
+
+def tidy(value: float) -> int | float:
+    return int(value) if float(value).is_integer() else round(value, 3)
