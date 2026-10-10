@@ -63,6 +63,7 @@
    ```bash
    uv run python -m scripts.measure
    uv run python -m scripts.stages --fast
+   uv run python -m scripts.calibrate   # отличает ли синтетика слабое от сильного
    ```
 
 5. Запустить веб-интерфейс и открыть http://localhost:8000. Порт можно передать
