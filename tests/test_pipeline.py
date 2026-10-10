@@ -118,6 +118,15 @@ def test_told_value_not_in_ktru_is_kept_with_remark():
     assert result["code"] is None
 
 
+def test_told_value_of_second_candidate_is_not_flagged():
+    result = run("Стол письменный, Тип каркаса: металлический")
+
+    frame = [c for c in result["chars"] if c["name"] == "Тип каркаса"][0]
+    assert frame["value"] == "Металлический"
+    assert frame["kind"] is None
+    assert result["code"] == "metal"
+
+
 def test_unit_conversion_gives_remark():
     result = run("Стол письменный деревянный, столешница 2,2 см")
 

@@ -102,13 +102,13 @@ def pair_char(
         source = "portal"
     if char is None:
         return new_char(name, item["value"], fragment, start, item["end"])
+    values = allowed.get(char["name"], []) if source == "ktru" else char["values"]
     if char["type"] == "number":
         if item["number"] is None:
             return None
-        values = allowed.get(char["name"], [])
         found = number_char(char, source, item["number"], item["unit"], values, fragment)
     else:
-        found = text_pair(char, source, item["value"], fragment)
+        found = text_pair(char, source, item["value"], fragment, values)
     found["start"], found["end"] = start, item["end"]
     return found
 
@@ -160,10 +160,12 @@ def where(source: Source) -> str:
     return "в КТРУ" if source == "ktru" else "на портале"
 
 
-def text_pair(char: Characteristic, source: Source, raw: str, fragment: str) -> FoundChar:
+def text_pair(
+    char: Characteristic, source: Source, raw: str, fragment: str, values: list[Value]
+) -> FoundChar:
     """Значение из списка, ближайшее при опечатке, иначе как есть. Списки портала собраны
     из того, что вводили поставщики, поэтому «нет в списке» говорим только про КТРУ."""
-    options = {str(v).casefold(): str(v) for v in char["values"] if isinstance(v, str)}
+    options = {v.casefold(): v for v in values if isinstance(v, str)}
     item: FoundChar = {
         "name": char["name"],
         "value": raw,
