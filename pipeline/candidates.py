@@ -20,13 +20,13 @@ def find(text: str, ref: list[Position]) -> Candidates:
         return {"category": None, "candidates": []}
 
     best = max(position_rank for position_rank, _ in ranked)
-    share = best[0]
-    if share < MIN_SHARE:
+    if best[0] < MIN_SHARE:
         return {"category": None, "candidates": []}
     top = [position for position_rank, position in ranked if position_rank == best]
+    score = 1 / len(top)
     return {
         "category": top[0]["category"],
-        "candidates": [{"code": p["code"], "name": p["name"], "score": share} for p in top],
+        "candidates": [{"code": p["code"], "name": p["name"], "score": score} for p in top],
     }
 
 

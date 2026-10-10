@@ -80,3 +80,27 @@ def test_contradicting_value_leaves_no_codes():
     assert result["code"] is None
     assert result["question"] is None
     assert result["steps"][-1] == {"what": "Толщина материала столешницы: 40", "left": 0}
+
+
+def test_unit_conversion_gives_remark():
+    result = run("Стол письменный деревянный, столешница 2,2 см")
+
+    assert result["remarks"] == [
+        {
+            "was": "2,2 см",
+            "now": "Толщина материала столешницы: 22 миллиметр",
+            "why": "в КТРУ единица миллиметр, перевели",
+        }
+    ]
+
+
+def test_value_as_is_gives_no_remark():
+    result = run("Стол письменный деревянный, столешница 22 мм")
+
+    assert result["remarks"] == []
+
+
+def test_candidate_scores_sum_to_one():
+    candidates = find("письменного стола", REF)["candidates"]
+
+    assert [c["score"] for c in candidates] == [0.5, 0.5]

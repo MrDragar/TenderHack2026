@@ -1,4 +1,4 @@
-from contracts.pipeline import Candidates, FoundChar, Question, Result, Step
+from contracts.pipeline import Candidates, FoundChar, Question, Remark, Result, Step
 from contracts.ref import Position, Range, Value
 
 
@@ -24,8 +24,21 @@ def narrow(candidates: Candidates, chars: list[FoundChar], ref: list[Position]) 
         "code": left[0]["code"] if len(left) == 1 else None,
         "question": ask(left) if len(left) > 1 else None,
         "missing_required": missing_required(left, chars),
-        "remarks": [],
+        "remarks": remarks(chars),
     }
+
+
+def remarks(chars: list[FoundChar]) -> list[Remark]:
+    """Правка видна пользователю, если значение взято не как есть."""
+    found: list[Remark] = []
+    for char in chars:
+        if char["fix"] is None:
+            continue
+        now = show(char["value"])
+        if char["unit"]:
+            now = f"{now} {char['unit']['name'].lower()}"
+        found.append({"was": char["fragment"], "now": f"{char['name']}: {now}", "why": char["fix"]})
+    return found
 
 
 def first_step(left: list[Position]) -> Step:

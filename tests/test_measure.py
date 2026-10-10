@@ -38,7 +38,14 @@ QUESTION: Question = {"char": "Тип каркаса", "options": ["Деревя
 
 
 def found(name: str, value: str | int | float) -> FoundChar:
-    return {"name": name, "value": value, "unit": None, "source": "ktru", "fragment": name}
+    return {
+        "name": name,
+        "value": value,
+        "unit": None,
+        "source": "ktru",
+        "fragment": name,
+        "fix": None,
+    }
 
 
 def result(code: str | None, question: Question | None = None) -> Result:

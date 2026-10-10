@@ -2,7 +2,7 @@ import re
 from typing import TypedDict
 
 from contracts.pipeline import Candidates, FoundChar
-from contracts.ref import Characteristic, Portal, Position
+from contracts.ref import Characteristic, Portal, Position, Unit
 from pipeline.text import stems, words
 
 UNIT_ALIASES = {
@@ -76,6 +76,7 @@ def text_values(text: str, chars: list[Characteristic]) -> list[FoundChar]:
                 "unit": None,
                 "source": "ktru",
                 "fragment": fragment,
+                "fix": None,
             }
         )
     return found
@@ -160,9 +161,16 @@ def number_values(text: str, chars: list[Characteristic]) -> list[FoundChar]:
                 "unit": unit,
                 "source": "ktru",
                 "fragment": match[0],
+                "fix": unit_fix(unit_code, unit),
             }
         )
     return found
+
+
+def unit_fix(unit_code: str, unit: Unit) -> str | None:
+    if unit_code == unit["code"]:
+        return None
+    return f"в КТРУ единица {unit['name'].lower()}, перевели"
 
 
 def owner(

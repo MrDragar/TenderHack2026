@@ -301,7 +301,14 @@ def gold_extract(example: GoldExample) -> ExtractChars:
 
 def gold_char(char: ExpectedChar) -> FoundChar:
     value = char["value"]
-    return {"name": char["name"], "value": value, "unit": None, "source": "ktru", "fragment": ""}
+    return {
+        "name": char["name"],
+        "value": value,
+        "unit": None,
+        "source": "ktru",
+        "fragment": "",
+        "fix": None,
+    }
 
 
 def ladder(

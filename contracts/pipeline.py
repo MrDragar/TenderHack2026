@@ -21,6 +21,7 @@ class FoundChar(TypedDict):
     unit: Unit | None
     source: Literal["ktru", "portal", "new"]
     fragment: str
+    fix: str | None
 
 
 class Step(TypedDict):
