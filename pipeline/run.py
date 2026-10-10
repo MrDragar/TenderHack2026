@@ -14,6 +14,7 @@ from contracts.pipeline import (
 )
 from contracts.ref import Portal, Position
 from pipeline.candidates import find
+from pipeline.explain import NAME_WHY, remarks
 from pipeline.extract import extract
 from pipeline.link import link
 from pipeline.narrow import narrow
@@ -35,8 +36,14 @@ def portal() -> Portal:
     return load_portal()
 
 
-def run(
+def run(text: str) -> Result:
+    return solve(text, reference(), portal())
+
+
+def solve(
     text: str,
+    ref: list[Position],
+    sections: Portal,
     find: FindCandidates = find,
     find_section: FindSection = find_section,
     extract: Extract = extract,
@@ -44,14 +51,24 @@ def run(
     narrow: Narrow = narrow,
 ) -> Result:
     """Этапы подменяются вариантом или эталоном, так замер сравнивает их по отдельности."""
-    ref = reference()
     found = find(text, ref)
-    section = find_section(text, portal())
-    result = narrow(found, link(extract(text), found, section, ref, portal()), ref)
-    result["section"] = section
-    result["unknown"] = unknown(text, covered(result), known(found, ref))
-    result["remarks"] = name_fixes(text, found, covered(result)) + result["remarks"]
-    return result
+    section = find_section(text, sections)
+    chars = link(extract(text), found, section, ref, sections)
+    narrowed = narrow(found, chars, ref)
+    taken = [(char["start"], char["end"]) for char in chars]
+    return {
+        "category": narrowed["category"],
+        "section": section,
+        "steps": narrowed["steps"],
+        "chars": chars,
+        "code": narrowed["code"],
+        "question": narrowed["question"],
+        "missing_required": narrowed["missing_required"],
+        "remarks": name_fixes(text, found, taken) + remarks(chars),
+        "candidates": narrowed["candidates"],
+        "options": narrowed["options"],
+        "unknown": unknown(text, taken, known(found, ref)),
+    }
 
 
 def name_fixes(text: str, found: list[Candidate], taken: list[tuple[int, int]]) -> list[Remark]:
@@ -63,16 +80,10 @@ def name_fixes(text: str, found: list[Candidate], taken: list[tuple[int, int]]) 
         inside = any(start <= word["start"] < end for start, end in taken)
         if word["fix"] is None or inside or word["stem"] not in by_stem:
             continue
-        why = "опечатка в названии товара"
-        if word["fix"] == "layout":
-            why = "набрано в английской раскладке или латиницей"
         was = text[word["start"] : word["end"]]
-        fixes.append({"was": was, "now": by_stem[word["stem"]], "why": why, "kind": word["fix"]})
+        now = by_stem[word["stem"]]
+        fixes.append({"was": was, "now": now, "why": NAME_WHY[word["fix"]], "kind": word["fix"]})
     return fixes
-
-
-def covered(result: Result) -> list[tuple[int, int]]:
-    return [(char["start"], char["end"]) for char in result["chars"]]
 
 
 def known(found: list[Candidate], ref: list[Position]) -> set[str]:

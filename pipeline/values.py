@@ -82,6 +82,11 @@ def show(value: Value) -> str:
     return " ".join(parts)
 
 
+def same(a: str | int | float, b: str | int | float) -> bool:
+    # В справочнике размер то строка «48», то число 48, сравниваем как показываем.
+    return show(a).strip().casefold() == show(b).strip().casefold()
+
+
 def convert(number: float, from_code: str, to_code: str) -> float:
     return number * scale(from_code)[1] / scale(to_code)[1]
 

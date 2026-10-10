@@ -1,37 +1,57 @@
+import json
 import sys
 from pathlib import Path
 from random import Random
+from typing import TypedDict
 
 from openpyxl import load_workbook
 
-from contracts.pipeline import Candidate, FoundChar, Fragment
+from contracts.pipeline import Candidate, FoundChar, Fragment, Narrowed
 from contracts.ref import Portal, Position
 from pipeline.candidates import find
 from pipeline.extract import NUMBER, extract
 from pipeline.link import link
 from pipeline.narrow import narrow
 from pipeline.section import find_section
-from pipeline.values import show
+from pipeline.values import same, show
 from scripts.generate import Generated, generate, gold_char, inside, section_texts, siblings
 
 RAW_DIR = Path("data/raw/Казань 2026/Примеры выгрузок")
+LAST_DIR = Path("data/eval/last")
+SHOWN_NEW = 5
 SHEETS = ("Одежда.xlsx", "Мебель.xlsx", "Инструменты.xlsx")
 PRODUCTS_PER_SHEET = 200
 GENERATED = 300
 SECTIONS = 300
 
 type Pairs = list[tuple[str, str]]
+# Пара это доля: верных и всего.
+type Number = int | float | tuple[int, int]
+
+
+class Failure(TypedDict):
+    text: str
+    expected: str
+    got: str
+
+
+class Stage(TypedDict):
+    key: str
+    title: str
+    metrics: dict[str, Number]
+    failures: list[Failure]
 
 
 def share(part: int, total: int) -> str:
     return f"{part}/{total} ({part / total:.0%})" if total else "0/0"
 
 
-def stage1(generated: list[Generated], ref: list[Position]) -> str:
+def stage1(generated: list[Generated], ref: list[Position]) -> Stage:
     """Соседние коды одного шаблона называются одинаково, их различает сужение, а не этап 1.
     Поэтому ранг считаем по шаблонам."""
     by_code = {p["code"]: p for p in ref}
-    lines = []
+    metrics: dict[str, Number] = {}
+    failures: list[Failure] = []
     for label, part in split(generated):
         top1 = 0
         top5 = 0
@@ -41,35 +61,54 @@ def stage1(generated: list[Generated], ref: list[Position]) -> str:
         for example in part:
             candidates = find(example["text"], ref)
             sizes += len(candidates)
-            place = template_rank(example["code"], candidates, by_code)
+            found = templates(candidates, by_code)
+            gold = template_of(example["code"], by_code)
+            place = found.index(gold) + 1 if gold in found else None
             if place is not None:
                 top1 += place == 1
                 top5 += place <= 5
                 reciprocal += 1 / place
-            gold = by_code[example["code"]]["category"]
-            category += bool(candidates) and by_code[candidates[0]["code"]]["category"] == gold
+            if place != 1:
+                failures.append(
+                    {
+                        "text": example["text"],
+                        "expected": named(gold, by_code),
+                        "got": listed([named(code, by_code) for code in found]),
+                    }
+                )
+            first = by_code[candidates[0]["code"]]["category"] if candidates else None
+            category += first == by_code[example["code"]]["category"]
         total = len(part)
-        mrr = reciprocal / total if total else 0
-        mean = sizes / total if total else 0
-        lines.append(
-            f"{label}: шаблон в топ-1 {share(top1, total)}, в топ-5 {share(top5, total)}, "
-            f"MRR {mrr:.2f}, категория {share(category, total)}, кандидатов {mean:.1f}"
-        )
-    return "1. Позиция КТРУ\n" + "\n".join(f"     {line}" for line in lines)
+        metrics[f"{label}: шаблон в топ-1"] = (top1, total)
+        metrics[f"{label}: шаблон в топ-5"] = (top5, total)
+        metrics[f"{label}: MRR"] = reciprocal / total if total else 0.0
+        metrics[f"{label}: категория"] = (category, total)
+        metrics[f"{label}: кандидатов в среднем"] = sizes / total if total else 0.0
+    return {"key": "stage1", "title": "1. Позиция КТРУ", "metrics": metrics, "failures": failures}
 
 
-def template_rank(
-    code: str, candidates: list[Candidate], by_code: dict[str, Position]
-) -> int | None:
-    templates: list[str] = []
+def templates(candidates: list[Candidate], by_code: dict[str, Position]) -> list[str]:
+    found: list[str] = []
     for candidate in candidates:
-        template = by_code[candidate["code"]]["parent_code"] or candidate["code"]
-        if template not in templates:
-            templates.append(template)
-    gold = by_code[code]["parent_code"] or code
-    if gold not in templates:
-        return None
-    return templates.index(gold) + 1
+        template = template_of(candidate["code"], by_code)
+        if template not in found:
+            found.append(template)
+    return found
+
+
+def template_of(code: str, by_code: dict[str, Position]) -> str:
+    return by_code[code]["parent_code"] or code
+
+
+def named(code: str, by_code: dict[str, Position]) -> str:
+    position = by_code.get(code)
+    return position["name"] if position else code
+
+
+def listed(items: list[str], shown: int = 3) -> str:
+    if not items:
+        return "ничего"
+    return "; ".join(items[:shown])
 
 
 def split(generated: list[Generated]) -> list[tuple[str, list[Generated]]]:
@@ -79,19 +118,27 @@ def split(generated: list[Generated]) -> list[tuple[str, list[Generated]]]:
     return [("чистые", clean), ("с порчей", spoiled)]
 
 
-def stage2(texts: list[tuple[str, str]], portal: Portal) -> str:
+def stage2(texts: list[tuple[str, str]], portal: Portal) -> Stage:
     """Отказ считаем отдельно от ошибки: «не знаю» лучше уверенно неверного раздела."""
     right = 0
     refused = 0
+    failures: list[Failure] = []
     for text, section in texts:
         found = find_section(text, portal)
         right += found == section
         refused += found is None
-    answered = len(texts) - refused
-    return (
-        f"2. Раздел портала: угадан {share(right, len(texts))}, "
-        f"отказ {share(refused, len(texts))}, верно среди ответивших {share(right, answered)}"
-    )
+        if found != section:
+            failures.append({"text": text, "expected": section, "got": found or "отказ"})
+    return {
+        "key": "stage2",
+        "title": "2. Раздел портала",
+        "metrics": {
+            "угадан": (right, len(texts)),
+            "отказ": (refused, len(texts)),
+            "верно среди ответивших": (right, len(texts) - refused),
+        },
+        "failures": failures,
+    }
 
 
 def products(names: set[str], raw_dir: Path = RAW_DIR) -> list[tuple[str, Pairs]]:
@@ -130,29 +177,42 @@ def longest_prefix(part: str, names: set[str]) -> str | None:
     return None
 
 
-def stage3(items: list[tuple[str, Pairs]]) -> str:
+def stage3(items: list[tuple[str, Pairs]]) -> Stage:
     """Пара найдена, если есть кусок с тем же названием и значением; числа сравниваем числом.
     Мягко: значение нашлось, а название нет, этап 4 ещё может его привязать."""
     expected = 0
     hits = 0
     soft = 0
-    named = 0
+    named_count = 0
+    failures: list[Failure] = []
     for name, pairs in items:
         text = ", ".join([name] + [f"{n} {v}" for n, v in pairs])
         fragments = extract(text)
         with_name = [f for f in fragments if f["name"]]
-        named += len(with_name)
+        named_count += len(with_name)
+        missed = []
         for pair_name, value in pairs:
             expected += 1
             if any(same_pair(f, pair_name, value) for f in with_name):
                 hits += 1
-            elif any(same_value(f, value) for f in fragments):
+                continue
+            missed.append(f"{pair_name}: {value}")
+            if any(same_value(f, value) for f in fragments):
                 soft += 1
-    return (
-        f"3. Извлечение: полнота {share(hits, expected)}, точность {share(hits, named)}, "
-        f"F1 {f_score(hits, named, expected, 1):.2f}, "
-        f"ещё только значение без названия {share(soft, expected)}"
-    )
+        if missed:
+            got = [f"{f['name']}: {f['value']}" for f in with_name]
+            failures.append({"text": text, "expected": "; ".join(missed), "got": listed(got, 10)})
+    return {
+        "key": "stage3",
+        "title": "3. Извлечение",
+        "metrics": {
+            "полнота": (hits, expected),
+            "точность": (hits, named_count),
+            "F1": f_score(hits, named_count, expected, 1),
+            "ещё только значение без названия": (soft, expected),
+        },
+        "failures": failures,
+    }
 
 
 def same_pair(item: Fragment, name: str, value: str) -> bool:
@@ -177,7 +237,7 @@ def f_score(right: int, found: int, expected: int, beta: float) -> float:
     return (1 + beta**2) * precision * recall / (beta**2 * precision + recall)
 
 
-def stage4(generated: list[Generated], by_code: dict[str, Position], ref: list[Position]) -> str:
+def stage4(generated: list[Generated], by_code: dict[str, Position], ref: list[Position]) -> Stage:
     expected = 0
     right = 0
     right_unit = 0
@@ -188,12 +248,15 @@ def stage4(generated: list[Generated], by_code: dict[str, Position], ref: list[P
     false_alarms = 0
     clean = 0
     by_kind: dict[str, list[int]] = {}
+    failures: list[Failure] = []
     for example in generated:
         position = by_code[example["code"]]
         candidates = siblings(position, by_code)
         found = link(example["fragments"], candidates, None, ref, {})
         names = {char["name"] for char in example["chars"]}
-        extra += sum(char["name"] not in names for char in found)
+        extras = sum(char["name"] not in names for char in found)
+        extra += extras
+        bad = extras > 0
         for char in example["chars"]:
             expected += 1
             got = [
@@ -203,27 +266,51 @@ def stage4(generated: list[Generated], by_code: dict[str, Position], ref: list[P
             right_unit += any(unit_ok(f, position) for f in got)
             fixed = [f for f in found if f["name"] == char["name"] and f["kind"]]
             fixes += bool(fixed)
+            bad = bad or not got
             if "kind" not in char:
                 clean += 1
                 false_alarms += bool(fixed)
+                bad = bad or bool(fixed)
                 continue
             corrupted += 1
             hit = any(f["kind"] == char["kind"] for f in got)
             right_fixes += hit
+            bad = bad or not hit
             counts = by_kind.setdefault(char["kind"], [0, 0])
             counts[0] += hit
             counts[1] += 1
-    kinds = ", ".join(f"{kind} {share(hit, total)}" for kind, (hit, total) in by_kind.items())
-    return (
-        f"4. Привязка и унификация: название и значение {share(right, expected)}, "
-        f"с единицей {share(right_unit, expected)}, "
-        f"лишних {extra}\n"
-        f"     правки: исправлено {share(right_fixes, corrupted)}, "
-        f"верных среди правок {share(right_fixes, fixes)}, "
-        f"F0.5 {f_score(right_fixes, fixes, corrupted, 0.5):.2f}, "
-        f"ложных на чистых {share(false_alarms, clean)}\n"
-        f"     по видам порчи: {kinds}"
-    )
+        if bad:
+            wanted = [described(c["name"], c["value"], c.get("kind")) for c in example["chars"]]
+            got_all = [described(f["name"], f["value"], f["kind"], f["rule"]) for f in found]
+            failures.append(
+                {"text": example["text"], "expected": "; ".join(wanted), "got": listed(got_all, 99)}
+            )
+    metrics: dict[str, Number] = {
+        "название и значение": (right, expected),
+        "с единицей": (right_unit, expected),
+        "лишних": extra,
+        "правки: исправлено": (right_fixes, corrupted),
+        "правки: верных среди правок": (right_fixes, fixes),
+        "правки: F0.5": f_score(right_fixes, fixes, corrupted, 0.5),
+        "правки: ложных на чистых": (false_alarms, clean),
+    }
+    for kind, (hit, total) in by_kind.items():
+        metrics[f"порча {kind}: исправлено"] = (hit, total)
+    return {
+        "key": "stage4",
+        "title": "4. Привязка и унификация",
+        "metrics": metrics,
+        "failures": failures,
+    }
+
+
+def described(name: str, value: str | int | float, *notes: str | None) -> str:
+    """Имя правила в выводе: в провале сразу видно, что сработало не так."""
+    text = f"{name}: {show(value)}"
+    kept = [note for note in notes if note]
+    if kept:
+        text += f" ({', '.join(kept)})"
+    return text
 
 
 def unit_ok(found: FoundChar, position: Position) -> bool:
@@ -234,11 +321,7 @@ def unit_ok(found: FoundChar, position: Position) -> bool:
     return found["unit"] is None
 
 
-def same(a: str | int | float, b: str | int | float) -> bool:
-    return show(a).strip().casefold() == show(b).strip().casefold()
-
-
-def stage5(generated: list[Generated], by_code: dict[str, Position], ref: list[Position]) -> str:
+def stage5(generated: list[Generated], by_code: dict[str, Position], ref: list[Position]) -> Stage:
     """Со всеми неизменяемыми значениями код должен найтись. Без одного допустим вопрос,
     но не уверенный неверный код; после ответа на вопрос код должен найтись."""
     rng = Random(0)
@@ -249,11 +332,16 @@ def stage5(generated: list[Generated], by_code: dict[str, Position], ref: list[P
     answered_right = 0
     required = 0
     required_shown = 0
+    failures: list[Failure] = []
     for example in generated:
         position = by_code[example["code"]]
         candidates = siblings(position, by_code)
         chars = fixed_chars(position)
-        full_right += narrow(candidates, chars, ref)["code"] == example["code"]
+        problems = []
+        full = narrow(candidates, chars, ref)
+        full_right += full["code"] == example["code"]
+        if full["code"] != example["code"]:
+            problems.append(f"со всеми значениями {outcome(full)}")
         if chars:
             removed = chars.pop(rng.randrange(len(chars)))
             if is_required(removed["name"], position):
@@ -262,20 +350,44 @@ def stage5(generated: list[Generated], by_code: dict[str, Position], ref: list[P
                 required_shown += removed["name"] in missing
         result = narrow(candidates, chars, ref)
         right += result["code"] == example["code"]
-        silent += result["code"] is not None and result["code"] != example["code"]
+        if result["code"] is not None and result["code"] != example["code"]:
+            silent += 1
+            problems.append(f"без одного значения молча {result['code']}")
         if result["question"]:
             asked += 1
             answer = answer_char(result["question"]["char"], position)
             if answer:
                 chars.append(answer)
-            answered_right += narrow(candidates, chars, ref)["code"] == example["code"]
+            after = narrow(candidates, chars, ref)
+            answered_right += after["code"] == example["code"]
+            if after["code"] != example["code"]:
+                problems.append(f"после ответа {outcome(after)}")
+        if problems:
+            failures.append(
+                {"text": example["text"], "expected": example["code"], "got": "; ".join(problems)}
+            )
     total = len(generated)
-    return (
-        f"5. Сужение: со всеми значениями код верен {share(full_right, total)}\n"
-        f"     без одного: код верен {share(right, total)}, вопрос {share(asked, total)}, "
-        f"молча неверно {silent}, после ответа код верен {share(answered_right, asked)}\n"
-        f"     убранная обязательная показана в недостающих {share(required_shown, required)}"
-    )
+    return {
+        "key": "stage5",
+        "title": "5. Сужение",
+        "metrics": {
+            "со всеми значениями код верен": (full_right, total),
+            "без одного: код верен": (right, total),
+            "без одного: вопрос": (asked, total),
+            "без одного: молча неверно": silent,
+            "после ответа код верен": (answered_right, asked),
+            "убранная обязательная показана в недостающих": (required_shown, required),
+        },
+        "failures": failures,
+    }
+
+
+def outcome(result: Narrowed) -> str:
+    if result["code"]:
+        return f"код {result['code']}"
+    if result["question"]:
+        return f"вопрос про {result['question']['char']}"
+    return "нет кода"
 
 
 def is_required(name: str, position: Position) -> bool:
@@ -301,22 +413,75 @@ def fixed_chars(position: Position) -> list[FoundChar]:
     return found
 
 
-def report(ref: list[Position], portal: Portal, with_products: bool = True) -> str:
+def stages(ref: list[Position], portal: Portal, with_products: bool = True) -> list[Stage]:
     by_code = {p["code"]: p for p in ref}
     generated = generate(ref, GENERATED)
-    lines = [
-        "Этапы на правильном входе",
-        f"  {stage1(generated, ref)}",
-        f"  {stage2(section_texts(portal, SECTIONS), portal)}",
-    ]
+    found = [stage1(generated, ref), stage2(section_texts(portal, SECTIONS), portal)]
     if with_products and portal and RAW_DIR.exists():
         names = set()
         for chars in portal.values():
             for char in chars:
                 names.add(char["name"].casefold())
-        lines.append(f"  {stage3(products(names))}")
-    lines += [f"  {stage4(generated, by_code, ref)}", f"  {stage5(generated, by_code, ref)}"]
+        found.append(stage3(products(names)))
+    found += [stage4(generated, by_code, ref), stage5(generated, by_code, ref)]
+    return found
+
+
+def compare(stage: Stage, last_dir: Path = LAST_DIR) -> str:
+    """Сравнение с прошлым прогоном и сохранение нового: после правки правила видно, какие
+    примеры сломались, а не только сдвиг процента."""
+    path = last_dir / f"{stage['key']}.json"
+    previous = load_stage(path)
+    lines = [stage["title"]]
+    for name, value in stage["metrics"].items():
+        line = f"  {name}: {shown(value)}"
+        if previous and name in previous["metrics"]:
+            old = shown(previous["metrics"][name])
+            if old != shown(value):
+                line += f" (было {old})"
+        lines.append(line)
+    if previous:
+        before = {failure_key(f) for f in previous["failures"]}
+        now = {failure_key(f) for f in stage["failures"]}
+        new = [f for f in stage["failures"] if failure_key(f) not in before]
+        lines.append(f"  с прошлого прогона: ушло провалов {len(before - now)}, новых {len(new)}")
+        for failure in new[:SHOWN_NEW]:
+            lines.append(
+                f"    «{failure['text']}»: ждали {failure['expected']}, получили {failure['got']}"
+            )
+    lines.append(f"  провалов {len(stage['failures'])}, все в {path}")
+    save_stage(path, stage)
     return "\n".join(lines)
+
+
+def shown(value: Number | list[int]) -> str:
+    if isinstance(value, tuple | list):
+        return share(value[0], value[1])
+    if isinstance(value, float):
+        return f"{value:.2f}"
+    return str(value)
+
+
+def failure_key(failure: Failure) -> tuple[str, str, str]:
+    return failure["text"], failure["expected"], failure["got"]
+
+
+def load_stage(path: Path) -> Stage | None:
+    if not path.exists():
+        return None
+    with path.open(encoding="utf-8") as source:
+        return json.load(source)
+
+
+def save_stage(path: Path, stage: Stage) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as target:
+        json.dump(stage, target, ensure_ascii=False, indent=1)
+
+
+def report(ref: list[Position], portal: Portal, with_products: bool = True) -> str:
+    found = stages(ref, portal, with_products)
+    return "Этапы на правильном входе\n" + "\n".join(compare(stage) for stage in found)
 
 
 if __name__ == "__main__":

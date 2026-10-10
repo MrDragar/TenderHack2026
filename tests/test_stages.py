@@ -1,6 +1,16 @@
 from contracts.ref import Characteristic, Position
 from scripts.generate import generate, section_texts
-from scripts.stages import f_score, split, split_pairs, stage1, stage2, stage4, stage5
+from scripts.stages import (
+    Stage,
+    compare,
+    f_score,
+    split,
+    split_pairs,
+    stage1,
+    stage2,
+    stage4,
+    stage5,
+)
 
 FRAME: Characteristic = {
     "code": "frame",
@@ -64,13 +74,18 @@ def test_split_pairs_by_longest_known_name():
     assert split_pairs("", names) == []
 
 
-def test_stage_lines_on_tiny_reference():
+def test_stage_metrics_on_tiny_reference():
     generated = generate(REF, 1)
 
-    assert "в топ-5 1/1" in stage1(generated, REF)
-    assert "лишних 0" in stage4(generated, BY_CODE, REF)
-    assert "со всеми значениями код верен 1/1" in stage5(generated, BY_CODE, REF)
-    assert "0/0" in stage1([], REF)
+    top5 = stage1(generated, REF)["metrics"]
+    assert (1, 1) in (top5["чистые: шаблон в топ-5"], top5["с порчей: шаблон в топ-5"])
+    assert stage4(generated, BY_CODE, REF)["metrics"]["лишних"] == 0
+    narrowed = stage5(generated, BY_CODE, REF)
+    assert narrowed["metrics"]["со всеми значениями код верен"] == (1, 1)
+    assert narrowed["failures"] == []
+    empty = stage1([], REF)
+    assert empty["metrics"]["чистые: шаблон в топ-1"] == (0, 0)
+    assert empty["failures"] == []
 
 
 def test_f_score_weights_precision_and_survives_zero():
@@ -98,6 +113,27 @@ def test_generated_split_into_clean_and_spoiled():
 def test_stage2_counts_refusal_apart_from_error():
     portal = {"Столы письменные": []}
 
-    line = stage2([("стол письменный", "Столы письменные"), ("", "Столы письменные")], portal)
+    stage = stage2([("стол письменный", "Столы письменные"), ("", "Столы письменные")], portal)
 
-    assert "отказ 1/2" in line
+    assert stage["metrics"]["отказ"] == (1, 2)
+    assert stage["failures"] == [{"text": "", "expected": "Столы письменные", "got": "отказ"}]
+
+
+def stage(right: int, failures: list[str]) -> Stage:
+    return {
+        "key": "stage2",
+        "title": "2. Раздел портала",
+        "metrics": {"угадан": (right, 3)},
+        "failures": [{"text": text, "expected": "стол", "got": "отказ"} for text in failures],
+    }
+
+
+def test_compare_shows_new_failures_since_last_run(tmp_path):
+    first = compare(stage(2, ["тумба"]), tmp_path)
+    second = compare(stage(1, ["шкаф", "кресло"]), tmp_path)
+
+    assert "было" not in first
+    assert "провалов 1" in first
+    assert "угадан: 1/3 (33%) (было 2/3 (67%))" in second
+    assert "ушло провалов 1, новых 2" in second
+    assert "«шкаф»: ждали стол, получили отказ" in second

@@ -18,9 +18,11 @@ from contracts.pipeline import (
 )
 from contracts.ref import Portal, Position
 from pipeline.link import link
-from pipeline.run import run
-from pipeline.values import show
+from pipeline.run import portal, reference, run, solve
+from pipeline.values import same, show
 from scripts.generate import gold_char, siblings
+from scripts.stages import Failure, Stage, compare
+from scripts.stages import report as stages_table
 
 DEFAULT_GOLD_PATH = Path("data/eval/gold.json")
 MAX_QUESTIONS = 3
@@ -46,11 +48,6 @@ class Dialog(TypedDict):
     extra_questions: int
     repeated: bool
     chars: Chars
-
-
-def same(a: str | int | float, b: str | int | float) -> bool:
-    # В справочнике размер то строка «48», то число 48, сравниваем как текст.
-    return show(a).strip().lower() == show(b).strip().lower()
 
 
 def check_chars(expected: list[ExpectedChar], found: list[FoundChar]) -> Chars:
@@ -315,7 +312,7 @@ def ladder(
 
 
 def staged(find: FindCandidates, link: Link = link) -> Run:
-    return lambda text: run(text, find=find, link=link)
+    return lambda text: solve(text, reference(), portal(), find=find, link=link)
 
 
 def stages_report(rows: dict[str, list[Dialog]]) -> str:
@@ -358,6 +355,32 @@ def silently_wrong(dialog: Dialog) -> bool:
     return code is not None and code != dialog["example"]["expected"]["code"]
 
 
+def gold_stage(dialogs: list[Dialog]) -> Stage:
+    known = [d for d in dialogs if d["example"]["expected"]["code"]]
+    ok = sum(d["chars"]["ok"] for d in dialogs)
+    expected = sum(len(d["example"]["expected"]["chars"]) for d in dialogs)
+    found = sum(d["chars"]["found"] for d in dialogs)
+    failures: list[Failure] = []
+    for dialog in dialogs:
+        if not is_clean(dialog):
+            wanted = outcome(dialog["example"]["expected"]["code"], None)
+            problems = errors(dialog)[1:]
+            failures.append(
+                {"text": dialog["example"]["text"], "expected": wanted, "got": "; ".join(problems)}
+            )
+    return {
+        "key": "gold",
+        "title": "Ручной эталон, сквозной прогон",
+        "metrics": {
+            "код верен": (sum(is_right(d) for d in known), len(known)),
+            "молча неверно": sum(silently_wrong(d) for d in dialogs),
+            "характеристики нашли": (ok, expected),
+            "из найденных верных": (ok, found),
+        },
+        "failures": failures,
+    }
+
+
 def load_gold(path: Path = DEFAULT_GOLD_PATH) -> list[GoldExample]:
     with path.open(encoding="utf-8") as source:
         return json.load(source)
@@ -365,8 +388,6 @@ def load_gold(path: Path = DEFAULT_GOLD_PATH) -> list[GoldExample]:
 
 if __name__ == "__main__":
     from pipeline.candidates import find
-    from pipeline.run import portal, reference
-    from scripts.stages import report as stages_table
 
     ref = reference()
     by_code = {position["code"]: position for position in ref}
@@ -382,3 +403,5 @@ if __name__ == "__main__":
     print(stages_report(rows))
     print()
     print(report(rows["как есть"]))
+    print()
+    print(compare(gold_stage(rows["как есть"])))

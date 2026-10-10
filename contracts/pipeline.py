@@ -15,6 +15,9 @@ type FixKind = Literal[
 ]
 
 
+type Rule = Literal["pair", "value", "number", "gold"]
+
+
 class Fragment(TypedDict):
     form: Literal["pair", "number", "words"]
     name: str | None
@@ -37,6 +40,7 @@ class FoundChar(TypedDict):
     required: bool
     fix: str | None
     kind: FixKind | None
+    rule: Rule
 
 
 class Step(TypedDict):
@@ -57,17 +61,20 @@ class Remark(TypedDict):
     kind: FixKind
 
 
-class Result(TypedDict):
+class Narrowed(TypedDict):
     category: Category | None
-    section: str | None
     steps: list[Step]
-    chars: list[FoundChar]
     code: str | None
     question: Question | None
     missing_required: list[str]
-    remarks: list[Remark]
     candidates: list[Candidate]
     options: dict[str, list[str]]
+
+
+class Result(Narrowed):
+    section: str | None
+    chars: list[FoundChar]
+    remarks: list[Remark]
     unknown: list[str]
 
 
@@ -77,5 +84,5 @@ type Extract = Callable[[str], list[Fragment]]
 type Link = Callable[
     [list[Fragment], list[Candidate], str | None, list[Position], Portal], list[FoundChar]
 ]
-type Narrow = Callable[[list[Candidate], list[FoundChar], list[Position]], Result]
+type Narrow = Callable[[list[Candidate], list[FoundChar], list[Position]], Narrowed]
 type Run = Callable[[str], Result]

@@ -1,7 +1,7 @@
 from collections import Counter
 from math import log2
 
-from contracts.pipeline import Candidate, FoundChar, Question, Remark, Result, Step
+from contracts.pipeline import Candidate, FoundChar, Narrowed, Question, Step
 from contracts.ref import Position
 from pipeline.values import matches, show
 
@@ -9,7 +9,7 @@ CATEGORY_NAMES = {"clothing": "Одежда", "furniture": "Мебель", "tool
 SHOWN = 4
 
 
-def narrow(candidates: list[Candidate], chars: list[FoundChar], ref: list[Position]) -> Result:
+def narrow(candidates: list[Candidate], chars: list[FoundChar], ref: list[Position]) -> Narrowed:
     """Отсеивает коды по найденным значениям и решает: код, вопрос или «не нашли»."""
     by_code = {p["code"]: p for p in ref}
     left = [by_code[c["code"]] for c in candidates]
@@ -30,39 +30,15 @@ def narrow(candidates: list[Candidate], chars: list[FoundChar], ref: list[Positi
 
     return {
         "category": category,
-        "section": None,
         "steps": steps,
-        "chars": chars,
         "code": left[0]["code"] if len(left) == 1 else None,
         "question": ask(left) if len(left) > 1 else None,
         "missing_required": missing_required(left, chars),
-        "remarks": remarks(chars),
         "candidates": [
             {"code": p["code"], "name": p["name"], "score": 1 / len(left)} for p in left
         ],
         "options": options(left),
-        "unknown": [],
     }
-
-
-def remarks(chars: list[FoundChar]) -> list[Remark]:
-    """Правка видна пользователю, если значение взято не как есть."""
-    found: list[Remark] = []
-    for char in chars:
-        if char["fix"] is None or char["kind"] is None:
-            continue
-        now = show(char["value"])
-        if char["unit"]:
-            now = f"{now} {char['unit']['name'].lower()}"
-        found.append(
-            {
-                "was": char["fragment"],
-                "now": f"{char['name']}: {now}",
-                "why": char["fix"],
-                "kind": char["kind"],
-            }
-        )
-    return found
 
 
 def funnel(left: list[Position], ref: list[Position]) -> list[Step]:

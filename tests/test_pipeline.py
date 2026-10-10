@@ -1,8 +1,8 @@
+from contracts.pipeline import Result
 from contracts.ref import Characteristic, Portal, Position
 from pipeline.candidates import find
 from pipeline.extract import extract
-from pipeline.link import link
-from pipeline.narrow import narrow
+from pipeline.run import solve
 from pipeline.section import find_section
 
 TOP: Characteristic = {
@@ -52,10 +52,8 @@ PORTAL: Portal = {
 }
 
 
-def run(text: str, portal: Portal | None = None):
-    candidates = find(text, REF)
-    section = find_section(text, portal or {})
-    return narrow(candidates, link(extract(text), candidates, section, REF, portal or {}), REF)
+def run(text: str, portal: Portal | None = None) -> Result:
+    return solve(text, REF, portal or {})
 
 
 def test_full_description_gives_one_code():

@@ -50,6 +50,7 @@ def found(name: str, value: str | int | float) -> FoundChar:
         "required": False,
         "fix": None,
         "kind": None,
+        "rule": "gold",
     }
 
 

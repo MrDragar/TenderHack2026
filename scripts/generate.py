@@ -235,6 +235,7 @@ def gold_char(char: ExpectedChar) -> FoundChar:
         "required": False,
         "fix": None,
         "kind": None,
+        "rule": "gold",
     }
 
 

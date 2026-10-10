@@ -1,10 +1,11 @@
 from difflib import get_close_matches
 from typing import Literal, TypedDict
 
-from contracts.pipeline import Candidate, FixKind, FoundChar, Fragment
+from contracts.pipeline import Candidate, FoundChar, Fragment, Rule
 from contracts.ref import Characteristic, Portal, PortalChar, Position, Unit, Value
+from pipeline.explain import mark
 from pipeline.text import Word, correct, stems, vocabulary, words
-from pipeline.values import UNIT_ALIASES, bounds, convert, scale, show, tidy
+from pipeline.values import UNIT_ALIASES, bounds, convert, same, scale, show, tidy
 
 # Перепутанная единица чаще всего сдвигает число на порядок: см вместо мм, м вместо см.
 SHIFTS = (10, 0.1, 100, 0.01, 1000, 0.001)
@@ -14,16 +15,9 @@ type Source = Literal["ktru", "portal"]
 
 
 class Match(TypedDict):
-    char: str
-    value: str
-    source: Source
-    fragment: str
-    start: int
-    end: int
+    char: FoundChar
     value_words: int
     name_words: int
-    required: bool
-    fix: FixKind | None
 
 
 def link(
@@ -41,20 +35,105 @@ def link(
     portal_chars = [as_ktru(char) for char in portal.get(section or "", [])]
     product = stems(" ".join(c["name"] for c in candidates))
 
-    told = []
-    for item in fragments:
-        if item["form"] == "pair":
-            found = pair_char(item, chars, portal_chars, allowed, product)
-            if found:
-                told.append(found)
-    found = last_per_name(told)
-    found += text_values(fragments, chars, portal_chars, product)
-    found += number_values(fragments, chars, portal_chars, allowed, product)
+    pairs = told_pairs(fragments, chars, portal_chars, allowed, product)
+    values = told_values(fragments, chars, portal_chars, product)
+    numbers = number_values(fragments, chars, portal_chars, allowed, product)
+    found = choose(pairs, values, numbers)
     # Обязательность у соседних кодов разная: обязательна, если обязательна хоть у одного.
     required = {char["name"] for char in chars if char["required"]}
     for char in found:
         char["required"] = char["source"] == "ktru" and char["name"] in required
+    return found
+
+
+def choose(
+    pairs: list[FoundChar], values: list[Match], numbers: list[FoundChar]
+) -> list[FoundChar]:
+    """Единственное место, где решается, какое значение победит. Явная пара сильнее значения
+    без названия, оно сильнее числа. Внутри правила спор решается молча, между правилами
+    разные значения одной характеристики дают правку «два значения»."""
+    found = last_per_name(pairs) + best_per_name(best_per_span(values)) + numbers
     return without_conflicts(found)
+
+
+def last_per_name(found: list[FoundChar]) -> list[FoundChar]:
+    """Человек дописывает исправление в конец, поэтому из явных значений верно последнее."""
+    last = {}
+    for char in found:
+        last[char["name"]] = char
+    return list(last.values())
+
+
+def best_per_span(matches: list[Match]) -> list[Match]:
+    """Кусок текста одной характеристике: «ЛДСП» у столешницы, если она есть в тексте."""
+    by_span: dict[tuple[int, int], list[Match]] = {}
+    for match in matches:
+        span = (match["char"]["start"], match["char"]["end"])
+        by_span.setdefault(span, []).append(match)
+    return [max(group, key=strength) for group in by_span.values()]
+
+
+def strength(match: Match) -> tuple[bool, int, int, bool, int]:
+    """КТРУ побеждает портал, затем полнота значения, слова названия в тексте, обязательная,
+    затем короче: из «Красный» и «3022 красная» верно первое."""
+    char = match["char"]
+    return (
+        char["source"] == "ktru",
+        match["value_words"],
+        match["name_words"],
+        char["required"],
+        -len(show(char["value"])),
+    )
+
+
+def best_per_name(matches: list[Match]) -> list[FoundChar]:
+    """Из двух значений одной характеристики берём значение КТРУ, затем более полное."""
+    best: dict[str, Match] = {}
+    for match in matches:
+        kept = best.get(match["char"]["name"])
+        if kept is None or fuller(match) > fuller(kept):
+            best[match["char"]["name"]] = match
+    return [match["char"] for match in best.values()]
+
+
+def fuller(match: Match) -> tuple[bool, int]:
+    return match["char"]["source"] == "ktru", match["value_words"]
+
+
+def without_conflicts(found: list[FoundChar]) -> list[FoundChar]:
+    kept: dict[str, FoundChar] = {}
+    for char in found:
+        first = kept.get(char["name"])
+        if first is None:
+            kept[char["name"]] = char
+        elif not same(first["value"], char["value"]):
+            mark(first, "conflict", other=char["fragment"])
+    return list(kept.values())
+
+
+def found_char(
+    char: Characteristic,
+    value: str | int | float,
+    source: Source,
+    rule: Rule,
+    fragment: str,
+    start: int = 0,
+    end: int = 0,
+    unit: Unit | None = None,
+) -> FoundChar:
+    return {
+        "name": char["name"],
+        "value": value,
+        "unit": unit,
+        "source": source,
+        "fragment": fragment,
+        "start": start,
+        "end": end,
+        "required": char["required"],
+        "fix": None,
+        "kind": None,
+        "rule": rule,
+    }
 
 
 def as_ktru(char: PortalChar) -> Characteristic:
@@ -82,6 +161,22 @@ def allowed_values(chars: list[Characteristic]) -> dict[str, list[Value]]:
     return allowed
 
 
+def told_pairs(
+    fragments: list[Fragment],
+    chars: list[Characteristic],
+    portal_chars: list[Characteristic],
+    allowed: dict[str, list[Value]],
+    product: set[str],
+) -> list[FoundChar]:
+    found = []
+    for item in fragments:
+        if item["form"] == "pair":
+            char = pair_char(item, chars, portal_chars, allowed, product)
+            if char:
+                found.append(char)
+    return found
+
+
 def pair_char(
     item: Fragment,
     chars: list[Characteristic],
@@ -106,7 +201,7 @@ def pair_char(
     if char["type"] == "number":
         if item["number"] is None:
             return None
-        found = number_char(char, source, item["number"], item["unit"], values, fragment)
+        found = number_char(char, source, "pair", item["number"], item["unit"], values, fragment)
     else:
         found = text_pair(char, source, item["value"], fragment, values)
     found["start"], found["end"] = start, item["end"]
@@ -119,14 +214,6 @@ def name_offset(name: str, product: set[str]) -> int | None:
         if word["stem"] not in product:
             return word["start"]
     return None
-
-
-def last_per_name(found: list[FoundChar]) -> list[FoundChar]:
-    """Человек дописывает исправление в конец, поэтому из явных значений верно последнее."""
-    last = {}
-    for char in found:
-        last[char["name"]] = char
-    return list(last.values())
 
 
 def named(chars: list[Characteristic], name: str) -> Characteristic | None:
@@ -153,11 +240,8 @@ def new_char(name: str, raw: str, fragment: str, start: int, end: int) -> FoundC
         "required": False,
         "fix": None,
         "kind": None,
+        "rule": "pair",
     }
-
-
-def where(source: Source) -> str:
-    return "в КТРУ" if source == "ktru" else "на портале"
 
 
 def text_pair(
@@ -166,40 +250,27 @@ def text_pair(
     """Значение из списка, ближайшее при опечатке, иначе как есть. Списки портала собраны
     из того, что вводили поставщики, поэтому «нет в списке» говорим только про КТРУ."""
     options = {v.casefold(): v for v in values if isinstance(v, str)}
-    item: FoundChar = {
-        "name": char["name"],
-        "value": raw,
-        "unit": None,
-        "source": source,
-        "fragment": fragment,
-        "start": 0,
-        "end": 0,
-        "required": False,
-        "fix": None,
-        "kind": None,
-    }
+    item = found_char(char, raw, source, "pair", fragment)
     if raw.casefold() in options:
         item["value"] = options[raw.casefold()]
         return item
     close = get_close_matches(raw.casefold(), options, n=1, cutoff=0.75)
     if close:
         item["value"] = options[close[0]]
-        item["fix"] = f"опечатка, {where(source)} пишется «{options[close[0]]}»"
-        item["kind"] = "typo"
+        mark(item, "typo")
         return item
     if source == "ktru":
         shown = ", ".join(sorted(set(options.values()))[:SHOWN_OPTIONS])
-        item["fix"] = f"такого значения нет в КТРУ, допустимо: {shown}"
-        item["kind"] = "not_in_list"
+        mark(item, "not_in_list", options=shown)
     return item
 
 
-def text_values(
+def told_values(
     fragments: list[Fragment],
     chars: list[Characteristic],
     portal_chars: list[Characteristic],
     product: set[str],
-) -> list[FoundChar]:
+) -> list[Match]:
     """Значения без названия: «деревянный» → Тип каркаса: Деревянный."""
     texts = []
     for char in chars + portal_chars:
@@ -216,43 +287,7 @@ def text_values(
             # Слова товара не подсказывают характеристику портала: «Вид стола: Письменный».
             told = [word for word in fragment_words if word["stem"] not in product]
             matches += find_matches(item, told, portal_chars, "portal")
-
-    best: dict[str, Match] = {}
-    for match in best_per_fragment(matches):
-        kept = best.get(match["char"])
-        # Из двух значений одной характеристики берём значение КТРУ, затем более полное.
-        if kept is None or fuller(match) > fuller(kept):
-            best[match["char"]] = match
-
-    found: list[FoundChar] = []
-    for match in best.values():
-        found.append(
-            {
-                "name": match["char"],
-                "value": match["value"],
-                "unit": None,
-                "source": match["source"],
-                "fragment": match["fragment"],
-                "start": match["start"],
-                "end": match["end"],
-                "required": match["required"],
-                "fix": word_fix(match["fix"], match["value"], match["source"]),
-                "kind": match["fix"],
-            }
-        )
-    return found
-
-
-def fuller(match: Match) -> tuple[bool, int]:
-    return match["source"] == "ktru", match["value_words"]
-
-
-def word_fix(kind: FixKind | None, value: str, source: Source) -> str | None:
-    if kind == "typo":
-        return f"опечатка, {where(source)} пишется «{value}»"
-    if kind == "layout":
-        return f"текст набран не в той раскладке или латиницей, это «{value}»"
-    return None
+    return matches
 
 
 def find_matches(
@@ -278,21 +313,14 @@ def find_matches(
                 continue
             start = min(word["start"] for word in hits)
             end = max(word["end"] for word in hits)
-            fixes = [word["fix"] for word in hits if word["fix"]]
-            matches.append(
-                {
-                    "char": char["name"],
-                    "value": value,
-                    "source": source,
-                    "fragment": item["text"][start:end],
-                    "start": item["start"] + start,
-                    "end": item["start"] + end,
-                    "value_words": len(wanted),
-                    "name_words": name_words,
-                    "required": char["required"],
-                    "fix": fixes[0] if fixes else None,
-                }
+            fragment = item["text"][start:end]
+            found = found_char(
+                char, value, source, "value", fragment, item["start"] + start, item["start"] + end
             )
+            fixes = [word["fix"] for word in hits if word["fix"]]
+            if fixes:
+                mark(found, fixes[0])
+            matches.append({"char": found, "value_words": len(wanted), "name_words": name_words})
     return matches
 
 
@@ -301,27 +329,6 @@ def searched_text(char: Characteristic, value: str) -> str:
     if value == "Да":
         return char["name"]
     return value
-
-
-def best_per_fragment(matches: list[Match]) -> list[Match]:
-    """Кусок текста одной характеристике: «ЛДСП» у столешницы, если она есть в тексте."""
-    by_fragment: dict[tuple[int, int], list[Match]] = {}
-    for match in matches:
-        by_fragment.setdefault((match["start"], match["end"]), []).append(match)
-
-    return [max(group, key=strength) for group in by_fragment.values()]
-
-
-def strength(match: Match) -> tuple[bool, int, int, bool, int]:
-    """КТРУ побеждает портал, затем полнота значения, слова названия в тексте, обязательная,
-    затем короче: из «Красный» и «3022 красная» верно первое."""
-    return (
-        match["source"] == "ktru",
-        match["value_words"],
-        match["name_words"],
-        match["required"],
-        -len(match["value"]),
-    )
 
 
 def number_values(
@@ -350,7 +357,9 @@ def number_values(
         if char is None:
             continue
         values = allowed.get(char["name"], [])
-        char_found = number_char(char, source, item["number"], item["unit"], values, item["text"])
+        char_found = number_char(
+            char, source, "number", item["number"], item["unit"], values, item["text"]
+        )
         char_found["start"], char_found["end"] = item["start"], item["end"]
         found.append(char_found)
     return found
@@ -367,6 +376,7 @@ def numeric_chars(chars: list[Characteristic]) -> list[Characteristic]:
 def number_char(
     char: Characteristic,
     source: Source,
+    rule: Rule,
     number: float,
     code: str | None,
     allowed: list[Value],
@@ -376,21 +386,9 @@ def number_char(
     value = number
     if unit and code:
         value = convert(number, code, unit["code"])
-    item: FoundChar = {
-        "name": char["name"],
-        "value": tidy(value),
-        "unit": unit,
-        "source": source,
-        "fragment": fragment,
-        "start": 0,
-        "end": 0,
-        "required": False,
-        "fix": None,
-        "kind": None,
-    }
+    item = found_char(char, tidy(value), source, rule, fragment, unit=unit)
     if unit and code and code != unit["code"]:
-        item["fix"] = f"{where(source)} единица {unit['name'].lower()}, перевели"
-        item["kind"] = "unit"
+        mark(item, "unit")
     check_range(item, allowed)
     return item
 
@@ -401,36 +399,17 @@ def check_range(item: FoundChar, allowed: list[Value]) -> None:
     value = item["value"]
     if corridor is None or isinstance(value, str) or within(value, corridor):
         return
-    unit = item["unit"]["name"].lower() if item["unit"] else ""
     for shift in SHIFTS:
         if within(value * shift, corridor):
             item["value"] = tidy(value * shift)
-            item["fix"] = (
-                f"«{item['fragment']}» не бывает у такого товара, "
-                f"похоже, перепутана единица: {show(item['value'])} {unit}"
-            )
-            item["kind"] = "wrong_unit"
+            mark(item, "wrong_unit")
             return
     low, high = corridor
-    item["fix"] = f"вне допустимого по КТРУ: от {show(low)} до {show(high)} {unit}"
-    item["kind"] = "out_of_range"
+    mark(item, "out_of_range", low=show(low), high=show(high))
 
 
 def within(value: float, corridor: tuple[float, float]) -> bool:
     return corridor[0] <= value <= corridor[1]
-
-
-def without_conflicts(found: list[FoundChar]) -> list[FoundChar]:
-    """Два разных значения одной характеристики: оставляем первое и говорим о втором."""
-    kept: dict[str, FoundChar] = {}
-    for char in found:
-        first = kept.get(char["name"])
-        if first is None:
-            kept[char["name"]] = char
-        elif show(first["value"]).casefold() != show(char["value"]).casefold():
-            first["fix"] = f"в тексте два значения: «{first['fragment']}» и «{char['fragment']}»"
-            first["kind"] = "conflict"
-    return list(kept.values())
 
 
 def owner(

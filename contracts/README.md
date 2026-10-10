@@ -19,7 +19,8 @@
 | pipeline.py | list[Candidate] | этап 1 | этапы 4 и 5 |
 | pipeline.py | Fragment | этап 3 | этап 4 |
 | pipeline.py | FoundChar | этап 4 | этап 5 |
-| pipeline.py | Result | этап 5 и run | замер, веб |
+| pipeline.py | Narrowed | этап 5 | run |
+| pipeline.py | Result | run | замер, веб |
 | pipeline.py | FindCandidates, FindSection, Extract, Link, Narrow, Run | | сигнатуры этапов |
 | eval.py | GoldExample | эталонный набор | замер |
 
@@ -47,7 +48,7 @@ FindCandidates(text, ref) → list[Candidate]          1. позиция КТР�
 FindSection(text, portal) → str | None               2. раздел портала
 Extract(text) → list[Fragment]                       3. извлечение
 Link(fragments, candidates, section, ref, portal) → list[FoundChar]   4. привязка
-Narrow(candidates, chars, ref) → Result              5. сужение и вопрос
+Narrow(candidates, chars, ref) → Narrowed            5. сужение и вопрос
 Run(text) → Result
 ```
 - Candidate: только конечные коды. score это вероятность кода, сумма по кандидатам 1.
@@ -60,7 +61,11 @@ Run(text) → Result
 - FoundChar: source "ktru", "portal" или "new". fragment это кусок исходного текста, из
   которого взято значение. fix это найденная порча и почему значение исправлено
   («в КТРУ единица миллиметр, перевели»), None если значение взято как есть. Из fix
-  сужение строит remarks. required только у КТРУ.
+  run строит remarks. required только у КТРУ. rule это правило, которое нашло значение:
+  "pair" явная пара, "value" значение без названия, "number" число, "gold" эталон
+  в замере. На странице не показываем, нужно для разбора провалов.
+- Narrowed: то, что решает сужение. Result собирает run из Narrowed, найденных
+  характеристик, раздела и правок.
 - Result:
   - section: раздел портала, None если не определили;
   - steps: шаги сужения, left это сколько кодов осталось после шага;
