@@ -95,7 +95,9 @@ def ask(left: list[Position]) -> Question:
 
 
 def show(value: Value) -> str:
-    """Значение КТРУ для человека, диапазон как «≥ 16 < 20»."""
+    """Значение КТРУ для человека: 48.0 как «48», диапазон как «≥ 16 < 20»."""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
     if not isinstance(value, dict):
         return str(value)
     parts = []

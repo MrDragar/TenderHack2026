@@ -1,7 +1,18 @@
+from typing import Literal
+
 from contracts.eval import ExpectedChar, GoldExample
 from contracts.pipeline import FoundChar, Question, Result
 from contracts.ref import Position
-from scripts.measure import check_chars, is_right, report, talk
+from scripts.measure import (
+    check_chars,
+    gold_extract,
+    gold_find,
+    is_right,
+    rank,
+    report,
+    stages_report,
+    talk,
+)
 
 DESK: Position = {
     "code": "desk-metal",
@@ -134,3 +145,73 @@ def test_report_counts_codes_by_questions():
     assert "  после 1 вопроса: 1" in text
     assert "  выбрали неверный код: 1" in text
     assert "ответ: ждали код desk-metal, получили код other" in text
+
+
+def test_rank_is_position_of_expected_code_or_none():
+    assert rank("b", ["a", "b"]) == 2
+    assert rank("c", ["a", "b"]) is None
+    assert rank(None, ["a"]) is None
+
+
+def sibling(code: str, position_type: Literal["template", "final"]) -> Position:
+    position = DESK.copy()
+    position["code"] = code
+    position["position_type"] = position_type
+    position["parent_code"] = "desk"
+    return position
+
+
+def test_gold_candidates_are_final_codes_of_same_template():
+    wood = sibling("desk-wood", "final")
+    metal = sibling("desk-metal", "final")
+    template = sibling("desk", "template")
+    by_code = {"desk-wood": wood, "desk-metal": metal, "desk": template}
+
+    found = gold_find(gold("Стол", "desk-metal", []), by_code)("Стол", [])
+
+    assert [c["code"] for c in found["candidates"]] == ["desk-wood", "desk-metal"]
+    assert [c["score"] for c in found["candidates"]] == [0.5, 0.5]
+
+
+def test_gold_candidates_are_empty_for_product_outside_ktru():
+    found = gold_find(gold("Рулетка", None, []), BY_CODE)("Рулетка", [])
+
+    assert found == {"category": None, "candidates": []}
+
+
+def test_gold_chars_add_values_from_replies_only():
+    example = gold("Стол офисный", "desk-metal", [{"name": "Высота", "value": 750}])
+    candidates = gold_find(example, BY_CODE)(example["text"], [])
+    told = gold_extract(example)
+
+    first = told(example["text"], candidates, [DESK], {})
+    after_reply = told(f"{example['text']}. Тип каркаса: Металлический", candidates, [DESK], {})
+
+    assert [(c["name"], c["value"]) for c in first] == [("Высота", 750)]
+    assert [(c["name"], c["value"]) for c in after_reply] == [
+        ("Высота", 750),
+        ("Тип каркаса", "Металлический"),
+    ]
+
+
+def test_stages_report_counts_silently_wrong_and_recall():
+    right = talk(
+        gold("Стол", "desk-metal", []),
+        lambda _: result("desk-metal"),
+        lambda _: ["x", "desk-metal"],
+        BY_CODE,
+    )
+    wrong = talk(gold("Стол", "desk-metal", []), lambda _: result("other"), no_candidates, BY_CODE)
+    rows = {"как есть": [right, wrong], "эталонные кандидаты": [right], "и характеристики": [right]}
+
+    text = stages_report(rows)
+
+    assert "Recall@1 0/2 (0%), Recall@5 1/2 (50%), Recall@20 1/2 (50%), MRR 0.25" in text
+    assert "как есть: верно 1/2 (50%), молча неверно 1, вопросов 0.0" in text
+
+
+def test_stages_report_on_empty_gold():
+    text = stages_report({"как есть": [], "эталонные кандидаты": [], "и характеристики": []})
+
+    assert "Recall@1 0/0" in text
+    assert "верно 0/0, молча неверно 0" in text

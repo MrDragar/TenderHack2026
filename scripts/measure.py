@@ -6,12 +6,24 @@ from pathlib import Path
 from typing import TypedDict
 
 from contracts.eval import ExpectedChar, GoldExample
-from contracts.pipeline import FoundChar, Question, Result, Run
-from contracts.ref import Position
-from pipeline.narrow import show as show_value
+from contracts.pipeline import (
+    Candidate,
+    Candidates,
+    ExtractChars,
+    FindCandidates,
+    FoundChar,
+    Question,
+    Result,
+    Run,
+)
+from contracts.ref import Portal, Position
+from pipeline.chars import extract
+from pipeline.narrow import show
+from pipeline.run import run
 
 DEFAULT_GOLD_PATH = Path("data/eval/gold.json")
 MAX_QUESTIONS = 3
+RECALL_AT = (1, 5, 20)
 
 type FindCodes = Callable[[str], list[str]]
 
@@ -28,7 +40,7 @@ class Dialog(TypedDict):
     first: Result
     final: Result
     seconds: float
-    in_candidates: bool
+    rank: int | None
     replies: list[str]
     extra_questions: int
     repeated: bool
@@ -37,13 +49,7 @@ class Dialog(TypedDict):
 
 def same(a: str | int | float, b: str | int | float) -> bool:
     # В справочнике размер то строка «48», то число 48, сравниваем как текст.
-    return show(a).lower() == show(b).lower()
-
-
-def show(value: str | int | float) -> str:
-    if isinstance(value, float) and value.is_integer():
-        return str(int(value))
-    return str(value).strip()
+    return show(a).strip().lower() == show(b).strip().lower()
 
 
 def check_chars(expected: list[ExpectedChar], found: list[FoundChar]) -> Chars:
@@ -71,7 +77,7 @@ def reply(question: Question, position: Position | None) -> str | None:
         return None
     for char in position["characteristics"]:
         if char["name"] == question["char"] and char["selection"] == "fixed":
-            values = ", ".join(show_value(v) for v in char["values"])
+            values = ", ".join(show(v) for v in char["values"])
             return f"{char['name']}: {values}"
     return None
 
@@ -114,12 +120,18 @@ def talk(
         "first": first,
         "final": result,
         "seconds": seconds,
-        "in_candidates": expected["code"] in find_codes(example["text"]),
+        "rank": rank(expected["code"], find_codes(example["text"])),
         "replies": replies,
         "extra_questions": extra_questions,
         "repeated": repeated,
         "chars": check_chars(expected["chars"], first["chars"]),
     }
+
+
+def rank(code: str | None, codes: list[str]) -> int | None:
+    if code not in codes:
+        return None
+    return codes.index(code) + 1
 
 
 def was_in_text(question: Question, expected: list[ExpectedChar]) -> bool:
@@ -143,14 +155,14 @@ def report(dialogs: list[Dialog]) -> str:
     categories = sum(
         d["first"]["category"] == d["example"]["expected"]["category"] for d in dialogs
     )
-    in_candidates = sum(d["in_candidates"] for d in known)
+    in_candidates = sum(d["rank"] is not None for d in known)
     not_found = sum(is_right(d) for d in unknown)
     times = [d["seconds"] for d in dialogs]
     mean = sum(times) / len(times)
     lines = [
         f"Категория: {share(categories, len(dialogs))}",
         f"Кандидаты: правильный код среди кандидатов {share(in_candidates, len(known))}",
-        chars_line(dialogs),
+        f"Характеристики: {chars_line(dialogs)}",
         f"Код: {share(sum(is_right(d) for d in known), len(known))}",
         *code_breakdown(known),
         f"Нет в КТРУ, ответили «не нашли»: {share(not_found, len(unknown))}",
@@ -166,7 +178,7 @@ def chars_line(dialogs: list[Dialog]) -> str:
     ok = sum(d["chars"]["ok"] for d in dialogs)
     expected = sum(len(d["example"]["expected"]["chars"]) for d in dialogs)
     found = sum(d["chars"]["found"] for d in dialogs)
-    return f"Характеристики: нашли {share(ok, expected)}, из найденных верных {share(ok, found)}"
+    return f"нашли {share(ok, expected)}, из найденных верных {share(ok, found)}"
 
 
 def code_breakdown(known: list[Dialog]) -> list[str]:
@@ -220,7 +232,7 @@ def errors(dialog: Dialog) -> list[str]:
         lines.append(
             f"  категория: ждали {expected['category']}, получили {dialog['first']['category']}"
         )
-    if expected["code"] and not dialog["in_candidates"]:
+    if expected["code"] and dialog["rank"] is None:
         lines.append("  правильного кода нет среди кандидатов")
     lines += [f"  спросили, ответили «{answer}" for answer in dialog["replies"]]
     if dialog["repeated"]:
@@ -244,20 +256,135 @@ def outcome(code: str | None, question: Question | None) -> str:
     return "«не нашли»"
 
 
+def gold_find(example: GoldExample, by_code: dict[str, Position]) -> FindCandidates:
+    found = gold_candidates(example, by_code)
+
+    def find(text: str, ref: list[Position]) -> Candidates:
+        return found
+
+    return find
+
+
+def gold_candidates(example: GoldExample, by_code: dict[str, Position]) -> Candidates:
+    """Все конечные коды шаблона эталонного кода: сужению остаётся различить соседей."""
+    position = by_code.get(example["expected"]["code"] or "")
+    if position is None:
+        return {"category": None, "candidates": []}
+    return {"category": position["category"], "candidates": siblings(position, by_code)}
+
+
+def siblings(position: Position, by_code: dict[str, Position]) -> list[Candidate]:
+    parent = position["parent_code"]
+    if parent is None:
+        family = [position]
+    else:
+        family = []
+        for p in by_code.values():
+            if p["parent_code"] == parent and p["position_type"] == "final":
+                family.append(p)
+    score = 1 / len(family)
+    return [{"code": p["code"], "name": p["name"], "score": score} for p in family]
+
+
+def gold_extract(example: GoldExample) -> ExtractChars:
+    """Эталонные характеристики, а ответы на вопросы, дописанные к тексту, разбирает этап."""
+    told = [gold_char(char) for char in example["expected"]["chars"]]
+
+    def extract_told(
+        text: str, candidates: Candidates, ref: list[Position], portal: Portal
+    ) -> list[FoundChar]:
+        replies = text[len(example["text"]) :]
+        return told + extract(replies, candidates, ref, portal)
+
+    return extract_told
+
+
+def gold_char(char: ExpectedChar) -> FoundChar:
+    value = char["value"]
+    return {"name": char["name"], "value": value, "unit": None, "source": "ktru", "fragment": ""}
+
+
+def ladder(
+    gold: list[GoldExample], find_codes: FindCodes, by_code: dict[str, Position]
+) -> dict[str, list[Dialog]]:
+    """Сквозной прогон, где этапы по очереди заменены эталоном: видно, где теряется код."""
+    rows: dict[str, list[Dialog]] = {
+        "как есть": [],
+        "эталонные кандидаты": [],
+        "и характеристики": [],
+    }
+    for example in gold:
+        find = gold_find(example, by_code)
+        told = gold_extract(example)
+        rows["как есть"].append(talk(example, run, find_codes, by_code))
+        with_find = talk(example, staged(find), find_codes, by_code)
+        rows["эталонные кандидаты"].append(with_find)
+        with_chars = talk(example, staged(find, told), find_codes, by_code)
+        rows["и характеристики"].append(with_chars)
+    return rows
+
+
+def staged(find: FindCandidates, extract: ExtractChars = extract) -> Run:
+    return lambda text: run(text, find=find, extract=extract)
+
+
+def stages_report(rows: dict[str, list[Dialog]]) -> str:
+    """Каждый этап мерится на эталонном входе, поэтому ошибки соседей его цифры не портят."""
+    known = [d for d in rows["как есть"] if d["example"]["expected"]["code"]]
+    lines = [
+        "Этапы на эталонном входе",
+        f"  Кандидаты: {recall_line(known)}",
+        f"  Характеристики на эталонных кандидатах: {chars_line(rows['эталонные кандидаты'])}",
+        f"  Сужение на эталонных характеристиках: {code_line(rows['и характеристики'])}",
+        "Лесенка, сквозная точность",
+    ]
+    for name, dialogs in rows.items():
+        lines.append(f"  {name}: {code_line(dialogs)}")
+    return "\n".join(lines)
+
+
+def recall_line(known: list[Dialog]) -> str:
+    parts = []
+    for k in RECALL_AT:
+        hits = sum(d["rank"] is not None and d["rank"] <= k for d in known)
+        parts.append(f"Recall@{k} {share(hits, len(known))}")
+    reciprocal = [1 / d["rank"] for d in known if d["rank"] is not None]
+    mrr = sum(reciprocal) / len(known) if known else 0
+    parts.append(f"MRR {mrr:.2f}")
+    return ", ".join(parts)
+
+
+def code_line(dialogs: list[Dialog]) -> str:
+    right = sum(is_right(d) for d in dialogs)
+    silent = sum(silently_wrong(d) for d in dialogs)
+    asked = sum(len(d["replies"]) for d in dialogs)
+    mean = asked / len(dialogs) if dialogs else 0
+    return f"верно {share(right, len(dialogs))}, молча неверно {silent}, вопросов {mean:.1f}"
+
+
+def silently_wrong(dialog: Dialog) -> bool:
+    """Уверенно выдали код, и он неверный: хуже вопроса и хуже «не нашли»."""
+    code = dialog["final"]["code"]
+    return code is not None and code != dialog["example"]["expected"]["code"]
+
+
 def load_gold(path: Path = DEFAULT_GOLD_PATH) -> list[GoldExample]:
     with path.open(encoding="utf-8") as source:
         return json.load(source)
 
 
 if __name__ == "__main__":
-    from pipeline.run import find_candidates, reference, run
+    from pipeline.candidates import find
+    from pipeline.run import reference
 
     ref = reference()
     by_code = {position["code"]: position for position in ref}
 
     def find_codes(text: str) -> list[str]:
-        return [c["code"] for c in find_candidates(text, ref)["candidates"]]
+        return [c["code"] for c in find(text, ref)["candidates"]]
 
     path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_GOLD_PATH
-    dialogs = [talk(example, run, find_codes, by_code) for example in load_gold(path)]
-    print(report(dialogs))
+    rows = ladder(load_gold(path), find_codes, by_code)
+    print(stages_report(rows))
+    print()
+    print(report(rows["как есть"]))

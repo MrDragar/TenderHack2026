@@ -9,20 +9,22 @@ from pipeline.chars import extract
 from pipeline.narrow import narrow
 from scripts.dataloader import load_data
 
-find_candidates: FindCandidates = find
-extract_chars: ExtractChars = extract
-narrow_codes: Narrow = narrow
-
 
 @cache
 def reference() -> list[Position]:
     return load_data()
 
 
-def run(text: str) -> Result:
+def run(
+    text: str,
+    find: FindCandidates = find,
+    extract: ExtractChars = extract,
+    narrow: Narrow = narrow,
+) -> Result:
+    """Этапы подменяются вариантом или эталоном, так замер сравнивает их по отдельности."""
     ref = reference()
-    found = find_candidates(text, ref)
-    return narrow_codes(found, extract_chars(text, found, ref, {}), ref)
+    found = find(text, ref)
+    return narrow(found, extract(text, found, ref, {}), ref)
 
 
 if __name__ == "__main__":
