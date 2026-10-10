@@ -177,6 +177,21 @@ def test_told_values_do_not_change_candidates():
     assert told == plain
 
 
+def test_leftover_ad_is_marked_trash():
+    result = run("Стол письменный деревянный, продам срочно")
+
+    leftover = {u["text"].casefold(): u["trash"] for u in result["unknown"]}
+    assert leftover["продам"] is True
+    assert leftover["срочно"] is True
+
+
+def test_plausible_leftover_goes_to_moderator():
+    result = run("Стол письменный деревянный, с ящиком")
+
+    leftover = {u["text"].casefold(): u["trash"] for u in result["unknown"]}
+    assert leftover["ящиком"] is False
+
+
 def test_section_by_name_and_none_when_unknown():
     assert find_section("стол письменный деревянный", PORTAL) == "Столы письменные"
     assert find_section("шины летние", PORTAL) is None

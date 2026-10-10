@@ -71,11 +71,20 @@ class Narrowed(TypedDict):
     options: dict[str, list[str]]
 
 
+class Leftover(TypedDict):
+    """Кусок описания, который не стал ни товаром, ни характеристикой. trash=True это мусор
+    (объявления, контакты, не наш язык) и человеку надо поправить; иначе это похоже на
+    настоящую характеристику, которую мы не разобрали, и её смотрит модератор."""
+
+    text: str
+    trash: bool
+
+
 class Result(Narrowed):
     section: str | None
     chars: list[FoundChar]
     remarks: list[Remark]
-    unknown: list[str]
+    unknown: list[Leftover]
 
 
 type FindCandidates = Callable[[str, list[Position]], list[Candidate]]

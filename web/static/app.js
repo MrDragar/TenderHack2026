@@ -166,9 +166,16 @@ function highlight(text, result) {
   }
   line.append(text.slice(pos));
   box.append(line);
-  if (result.unknown.length) {
+  const junk = result.unknown.filter((u) => u.trash).map((u) => u.text);
+  const rest = result.unknown.filter((u) => !u.trash).map((u) => u.text);
+  if (junk.length) {
     box.append(
-      el("div", "p6 unknown", `Не поняли, к чему относится: ${result.unknown.join(", ")}. Это слово не потеряно, допишите название характеристики через двоеточие.`),
+      el("div", "p6 unknown", `Похоже на мусор, поправьте описание: ${junk.join(", ")}.`),
+    );
+  }
+  if (rest.length) {
+    box.append(
+      el("div", "p6 unknown", `Не разобрали как характеристику, передали модератору: ${rest.join(", ")}.`),
     );
   }
 }
