@@ -47,4 +47,4 @@ class PortalChar(TypedDict):
     values: list[str]
 
 
-type Portal = dict[Category, list[PortalChar]]
+type Portal = dict[str, list[PortalChar]]
