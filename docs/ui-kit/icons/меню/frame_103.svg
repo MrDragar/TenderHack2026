@@ -1,0 +1,16 @@
+<svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+<rect opacity="0.2" x="12" y="14" width="24" height="24" fill="url(#paint0_linear_1_52283)"/>
+<rect x="8.35156" y="10.0603" width="24.3225" height="24.3613" stroke="#7FB3E3" stroke-width="2" stroke-linejoin="round"/>
+<line x1="13.4043" y1="6" x2="13.4043" y2="11.4136" stroke="#7FB3E3" stroke-width="2" stroke-linejoin="round"/>
+<line x1="26.918" y1="6" x2="26.918" y2="11.4136" stroke="#7FB3E3" stroke-width="2" stroke-linejoin="round"/>
+<line x1="8" y1="16" x2="32" y2="16" stroke="#7FB3E3" stroke-width="2" stroke-linejoin="round"/>
+<path d="M13.7559 18.8574H15.9455L16.5865 20.9158M16.5865 20.9158L18.3541 26.9778H24.1203L25.9171 20.9158H16.5865Z" stroke="#264B82" stroke-width="2"/>
+<ellipse cx="17.8102" cy="30.3612" rx="1.35125" ry="1.3534" fill="#7FB3E3"/>
+<ellipse cx="24.5661" cy="30.3612" rx="1.35125" ry="1.3534" fill="#7FB3E3"/>
+<defs>
+<linearGradient id="paint0_linear_1_52283" x1="24" y1="14" x2="24" y2="38" gradientUnits="userSpaceOnUse">
+<stop stop-color="#077EBB"/>
+<stop offset="1" stop-color="#077EBB" stop-opacity="0"/>
+</linearGradient>
+</defs>
+</svg>

@@ -1,0 +1,21 @@
+<svg width="60" height="60" viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg">
+<circle cx="30" cy="30" r="30" fill="#DB2B21"/>
+<path d="M20.1426 20.7144H31.2852C32.3897 20.7144 33.2852 21.6098 33.2852 22.7144V39.0005C33.2849 40.1049 32.3896 41.0005 31.2852 41.0005H20.1426C19.0381 41.0005 18.1428 40.1049 18.1426 39.0005V22.7144C18.1426 21.6098 19.038 20.7144 20.1426 20.7144Z" stroke="white" stroke-width="2" stroke-linejoin="round"/>
+<path d="M20.5703 27.4287H29.9989" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M20.5703 30.8572H29.9989" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M20.5703 34.2859H29.9989" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M20.5703 37.7144H25.7132" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M20.5703 24H29.9989" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<mask id="mask0_1_51705" style="mask-type:alpha" maskUnits="userSpaceOnUse" x="21" y="15" width="18" height="23">
+<path d="M38.0703 15.9285V37.2146H36.0703V36.0125L36.499 19.2986L36.5117 18.8191L36.0322 18.7869L23.1748 17.9294L23.1582 17.9285H21.9277V15.9285H38.0703Z" fill="#C4C4C4" stroke="#264B82"/>
+</mask>
+<g mask="url(#mask0_1_51705)">
+<path d="M24.4277 16.4285H35.5703C36.6749 16.4285 37.5703 17.3239 37.5703 18.4285V34.7146C37.5701 35.819 36.6747 36.7146 35.5703 36.7146H24.4277C23.3233 36.7146 22.428 35.819 22.4277 34.7146V18.4285C22.4277 17.3239 23.3232 16.4285 24.4277 16.4285Z" stroke="white" stroke-width="2" stroke-linejoin="round"/>
+</g>
+<circle cx="36" cy="39.4287" r="7" fill="#DB2B21" stroke="white" stroke-width="2"/>
+<rect x="38.5352" y="35.9052" width="0.857143" height="8.57143" rx="0.428571" transform="rotate(45 38.5352 35.9052)" fill="#DB2B21" stroke="white" stroke-width="0.857143"/>
+<rect x="39.142" y="41.9658" width="0.857143" height="8.57143" rx="0.428571" transform="rotate(135 39.142 41.9658)" fill="#DB2B21" stroke="white" stroke-width="0.857143"/>
+<circle cx="30" cy="30" r="30" fill="#E7EEF7"/>
+<circle cx="30" cy="30" r="12.5" stroke="#264B82" stroke-width="3"/>
+<path d="M45.7678 14.4537C46.7441 15.43 46.7441 17.0129 45.7678 17.9892L18.1906 45.5663C17.2143 46.5427 15.6314 46.5427 14.6551 45.5663C13.6788 44.59 13.6788 43.0071 14.6551 42.0308L42.2322 14.4537C43.2085 13.4773 44.7915 13.4773 45.7678 14.4537Z" fill="#264B82" stroke="#E7EEF7" stroke-width="2"/>
+</svg>
