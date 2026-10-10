@@ -1,6 +1,6 @@
 from contracts.ref import Characteristic, Position
 from scripts.generate import generate, section_texts
-from scripts.stages import split_pairs, stage1, stage4, stage5
+from scripts.stages import f_score, split, split_pairs, stage1, stage2, stage4, stage5
 
 FRAME: Characteristic = {
     "code": "frame",
@@ -67,7 +67,37 @@ def test_split_pairs_by_longest_known_name():
 def test_stage_lines_on_tiny_reference():
     generated = generate(REF, 1)
 
-    assert "верный код среди кандидатов 1/1" in stage1(generated, REF)
+    assert "в топ-5 1/1" in stage1(generated, REF)
     assert "лишних 0" in stage4(generated, BY_CODE, REF)
     assert "со всеми значениями код верен 1/1" in stage5(generated, BY_CODE, REF)
     assert "0/0" in stage1([], REF)
+
+
+def test_f_score_weights_precision_and_survives_zero():
+    assert f_score(0, 0, 0, 0.5) == 0
+    assert f_score(1, 1, 1, 0.5) == 1
+    precise = f_score(5, 5, 10, 0.5)
+    complete = f_score(5, 10, 5, 0.5)
+    assert precise > complete
+
+
+def test_generated_split_into_clean_and_spoiled():
+    generated = []
+    for seed in range(20):
+        generated += generate(REF, 1, seed)
+
+    (_, clean), (_, spoiled) = split(generated)
+
+    assert clean and spoiled
+    assert len(clean) + len(spoiled) == len(generated)
+    for example in clean:
+        assert example["text"].startswith(DESK["name"].lower())
+        assert all("kind" not in char for char in example["chars"])
+
+
+def test_stage2_counts_refusal_apart_from_error():
+    portal = {"Столы письменные": []}
+
+    line = stage2([("стол письменный", "Столы письменные"), ("", "Столы письменные")], portal)
+
+    assert "отказ 1/2" in line

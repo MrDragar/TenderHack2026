@@ -22,6 +22,7 @@ class Generated(TypedDict):
     code: str
     fragments: list[Fragment]
     chars: list[ExpectedChar]
+    noisy: bool
 
 
 class Piece(TypedDict):
@@ -65,7 +66,15 @@ def one(position: Position, rng: Random) -> Generated:
         text += piece["text"]
         if piece["char"]:
             chars.append(piece["char"])
-    return {"text": text, "code": position["code"], "fragments": fragments, "chars": chars}
+    spoiled_name = pieces[0]["text"] != position["name"].lower()
+    noisy = spoiled_name or any("kind" in char for char in chars)
+    return {
+        "text": text,
+        "code": position["code"],
+        "fragments": fragments,
+        "chars": chars,
+        "noisy": noisy,
+    }
 
 
 def renderable(char: Characteristic) -> bool:
@@ -116,7 +125,8 @@ def text_piece(char: Characteristic, rng: Random) -> Piece:
         if spoiled != shown:
             shown = spoiled
             expected["kind"] = "typo"
-    if rng.random() < 0.5:
+    # «Наличие пюпитра: наличие пюпитра» никто не пишет, признак называют одним названием.
+    if rng.random() < 0.5 and value != "Да":
         text = f"{char['name']}: {shown}"
         item = fragment("pair", char["name"], shown, text, 0, len(text))
         return {"text": text, "fragments": [item], "char": expected}

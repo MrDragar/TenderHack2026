@@ -162,6 +162,7 @@ def report(dialogs: list[Dialog]) -> str:
     not_found = sum(is_right(d) for d in unknown)
     times = [d["seconds"] for d in dialogs]
     mean = sum(times) / len(times)
+    slow = sorted(times)[int(len(times) * 0.95)]
     lines = [
         f"Категория: {share(categories, len(dialogs))}",
         f"Кандидаты: правильный код среди кандидатов {share(in_candidates, len(known))}",
@@ -169,7 +170,7 @@ def report(dialogs: list[Dialog]) -> str:
         f"Код: {share(sum(is_right(d) for d in known), len(known))}",
         *code_breakdown(known),
         f"Нет в КТРУ, ответили «не нашли»: {share(not_found, len(unknown))}",
-        f"Время: среднее {mean:.2f} с, максимум {max(times):.2f} с",
+        f"Время: среднее {mean:.2f} с, 95% быстрее {slow:.2f} с, максимум {max(times):.2f} с",
     ]
     for dialog in dialogs:
         if not is_clean(dialog):
