@@ -26,7 +26,7 @@
 .auth .btn { text-decoration: none; }
 .btn-text { background: none; color: var(--black); padding: 0 12px; }
 
-body { min-height: 100vh; display: flex; flex-direction: column; }
+#root { min-height: 100vh; display: flex; flex-direction: column; }
 .page { flex: 1; width: 100%; max-width: 1312px; box-sizing: border-box; padding-top: 40px; padding-bottom: 60px; display: grid; align-content: start; gap: var(--gutter); }
 
 .label-row { display: flex; justify-content: space-between; align-items: end; gap: 16px; }
@@ -109,6 +109,7 @@ body { min-height: 100vh; display: flex; flex-direction: column; }
 .tags .tag { border: 0; cursor: pointer; }
 
 .chars { margin-top: 16px; }
+.table-wrap { overflow-x: auto; }
 .status-sea { color: var(--sea-dark); }
 .fragment { color: var(--gray); font-style: italic; }
 
@@ -140,7 +141,6 @@ body { min-height: 100vh; display: flex; flex-direction: column; }
   .result { grid-template-columns: 1fr; }
   .search { flex-direction: column; }
   .search .input { flex: none; }
-  .chars { display: block; overflow-x: auto; }
   .card { padding: 20px; }
 }
 

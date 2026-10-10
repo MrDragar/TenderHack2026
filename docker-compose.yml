@@ -1,0 +1,17 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: web/backend/Dockerfile
+    volumes:
+      - ./data:/app/data:ro
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: web/frontend
+    depends_on:
+      - backend
+    ports:
+      - "3000:80"
