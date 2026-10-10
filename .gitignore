@@ -22,3 +22,4 @@ docs/team-plan.pdf
 .claude/settings.local.json
 .~lock.*#
 ~$*
+*.local.md
