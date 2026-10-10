@@ -1,14 +1,17 @@
 from contracts.ref import Characteristic, Position
 from scripts.generate import generate, section_texts
+from scripts.products import Product, split_pairs, tags, weak_section
 from scripts.stages import (
     Stage,
     by_tag,
     compare,
+    covering,
     f_score,
+    glued,
     split,
-    split_pairs,
     stage1,
     stage2,
+    stage2_products,
     stage4,
     stage5,
     stage34,
@@ -75,6 +78,75 @@ def test_split_pairs_by_longest_known_name():
 
     assert pairs == [("Высота шкафа", "до 90 см"), ("Масса", "26 г")]
     assert split_pairs("", names) == []
+    assert split_pairs("Масса  26   г", names) == [("Масса", "26 г")]
+
+
+def test_weak_section_only_when_one_section_has_every_name():
+    sections = {
+        "Шкафы": {"высота шкафа", "масса", "цвет"},
+        "Сейфы": {"масса", "тип замка"},
+        "Стулья": {"масса", "цвет"},
+    }
+
+    assert weak_section([("Высота шкафа", "90 см"), ("Масса", "26 г")], sections) == "Шкафы"
+    assert weak_section([("Масса", "26 г")], sections) is None
+    assert weak_section([("Масса", "1 кг"), ("Ремень", "есть")], sections) is None
+    assert weak_section([], {"Шкафы": set()}) == "Шкафы"
+
+
+def test_tags_mark_long_names_and_models():
+    assert tags("Шкаф КБС-011Т") == ["бренд или модель"]
+    assert tags("Перфоратор Makita HR2450FT") == ["бренд или модель"]
+    assert tags("Шкаф ПРАКТИК для документов") == ["бренд или модель"]
+    assert tags("Стол письменный 1200х800") == []
+    assert "длинное название" in tags("Стол " * 10)
+    assert tags("") == []
+
+
+def product(name: str, pairs: list[tuple[str, str]], section: str | None) -> Product:
+    return {
+        "id": "1",
+        "category": "furniture",
+        "name": name,
+        "pairs": pairs,
+        "section": section,
+        "tags": [],
+        "test": False,
+    }
+
+
+def test_glued_spans_point_at_pairs():
+    item = product("Шкаф", [("Масса", "26 г"), ("Цвет", "серый")], None)
+
+    text, spans = glued(item)
+
+    assert text == "Шкаф, Масса 26 г, Цвет серый"
+    assert [text[a:b] for a, b in spans] == ["Масса 26 г", "Цвет серый"]
+    assert glued(product("Шкаф", [], None)) == ("Шкаф", [])
+
+
+def test_covering_finds_char_inside_pair_span():
+    char = {"start": 12, "source": "ktru"}
+
+    assert covering([char], (6, 16)) is char
+    assert covering([char], (17, 27)) is None
+    assert covering([], (0, 5)) is None
+
+
+def test_stage2_on_products_skips_unlabeled_and_slices_by_category():
+    portal = {"Столы письменные": [], "Шкафы": []}
+    items = [
+        product("стол письменный", [], "Столы письменные"),
+        product("шкаф", [], "Шкафы"),
+        product("что-то", [], None),
+    ]
+
+    metrics = stage2_products(items, portal)["metrics"]
+
+    assert metrics["с меткой раздела"] == (2, 3)
+    assert metrics["угадан"] == (2, 2)
+    assert metrics["угадан, мебель"] == (2, 2)
+    assert stage2_products([], portal)["metrics"]["угадан"] == (0, 0)
 
 
 def test_stage_metrics_on_tiny_reference():
