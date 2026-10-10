@@ -3,7 +3,8 @@
   uv run python -m scripts.calibrate
 
 Ступени это бейзлайн, у которого отключено по одной способности. Синтетика годится, если
-ступени на ней идут в том же порядке, что на золоте, бейзлайн не упирается в потолок,
+ступени на ней идут в том же порядке, что на живых данных: на золоте, а для раздела
+портала на листе 1 с разделом по совпадению характеристик, бейзлайн не упирается в потолок,
 а разрыв между ступенями не меньше, чем на золоте. Синтетика почти всегда легче живых
 текстов, поэтому важен порядок и разрыв, а не сами проценты.
 """
@@ -20,10 +21,12 @@ from contracts.ref import Position
 from pipeline.candidates import find
 from pipeline.link import link
 from pipeline.run import portal, reference, solve
+from pipeline.section import find_section
 from pipeline.values import same
-from scripts.generate import Generated, generate, siblings
+from scripts.generate import Generated, generate, section_texts, siblings
 from scripts.measure import check_chars, gold_find, load_gold
-from scripts.stages import GENERATED, named, template_names, template_of
+from scripts.products import products
+from scripts.stages import GENERATED, SECTIONS, named, template_names, template_of
 
 # Тег у ступени показывает только синтетика: на 60 фразах золота разбивка по тегам шумная.
 SHOWN_TAGS = 12
@@ -53,12 +56,14 @@ NO_UNITS: Patches = [
     ("pipeline.link.convert", unchanged),
     ("pipeline.link.check_range", nothing),
 ]
+BY_NAME: dict[str, Patches] = {
+    "точные слова": [*NO_TYPOS, ("pipeline.text.stem", exact)],
+    "без исправления опечаток": NO_TYPOS,
+    "бейзлайн": [],
+}
 RUNGS: dict[str, dict[str, Patches]] = {
-    "candidates": {
-        "точные слова": [*NO_TYPOS, ("pipeline.text.stem", exact)],
-        "без исправления опечаток": NO_TYPOS,
-        "бейзлайн": [],
-    },
+    "candidates": BY_NAME,
+    "section": BY_NAME,
     "link": {
         "точные слова": [*NO_UNITS, ("pipeline.text.stem", exact)],
         "без опечаток и единиц": NO_UNITS,
@@ -129,9 +134,28 @@ def gold_link(gold: list[GoldExample], ref: list[Position]) -> list[bool]:
     return found
 
 
+def synthetic_section(_: list[Generated], __: list[Position]) -> list[bool]:
+    sections = portal()
+    found = []
+    for text, section in section_texts(sections, SECTIONS):
+        found.append(find_section(text, sections) == section)
+    return found
+
+
+def sheet1_section(_: list[GoldExample], __: list[Position]) -> list[bool]:
+    """Только название товара: раздел взят из названий его характеристик."""
+    sections = portal()
+    found = []
+    for product in products(sections):
+        if product["section"]:
+            found.append(find_section(product["name"], sections) == product["section"])
+    return found
+
+
 MEASURES = {
-    "candidates": ("шаблон первым", synthetic_candidates, gold_candidates),
-    "link": ("пример верен целиком", synthetic_link, gold_link),
+    "candidates": ("шаблон первым, живые это золото", synthetic_candidates, gold_candidates),
+    "link": ("пример верен целиком, живые это золото", synthetic_link, gold_link),
+    "section": ("раздел угадан, живые это лист 1", synthetic_section, sheet1_section),
 }
 
 
@@ -140,15 +164,15 @@ def share(found: list[bool]) -> float:
 
 
 def agreement(synthetic: list[float], gold: list[float]) -> str:
-    """Пары ступеней, которые синтетика упорядочила как золото (как тау Кендалла). Ничьи
-    на золоте не считаем: на 55 фразах одна фраза это почти два процента."""
+    """Пары ступеней, которые синтетика упорядочила как живые данные (как тау Кендалла).
+    Ничьи на живых не считаем: на 55 фразах золота одна фраза это почти два процента."""
     same_order = 0
     compared = 0
     for i, j in combinations(range(len(gold)), 2):
         if gold[i] != gold[j]:
             compared += 1
             same_order += (synthetic[i] - synthetic[j]) * (gold[i] - gold[j]) > 0
-    return f"{same_order} из {compared} пар, различимых на золоте"
+    return f"{same_order} из {compared} пар, различимых на живых"
 
 
 def by_tag(generated: list[Generated], weak: list[bool], strong: list[bool]) -> list[str]:
@@ -170,7 +194,7 @@ def by_tag(generated: list[Generated], weak: list[bool], strong: list[bool]) -> 
 def report(stage: str, generated: list[Generated], gold: list[GoldExample]) -> list[str]:
     ref = reference()
     title, on_synthetic, on_gold = MEASURES[stage]
-    lines = [f"{stage}: {title}", f"  {'':28}{'синтетика':>10}{'золото':>9}"]
+    lines = [f"{stage}: {title}", f"  {'':28}{'синтетика':>10}{'живые':>9}"]
     synthetic_rows = []
     synthetic_scores = []
     gold_scores = []
@@ -186,11 +210,13 @@ def report(stage: str, generated: list[Generated], gold: list[GoldExample]) -> l
     easy = share(synthetic_rows[0])
     lines += [
         f"  порядок ступеней совпал: {order}",
-        f"  разрыв слабая → бейзлайн: синтетика {synthetic_gap:+.0%}, золото {gold_gap:+.0%}",
+        f"  разрыв слабая → бейзлайн: синтетика {synthetic_gap:+.0%}, живые {gold_gap:+.0%}",
         f"  решает даже слабая ступень: {easy:.0%} синтетики",
-        "  по тегам, слабая → бейзлайн, сверху самые различающие:",
     ]
-    lines += by_tag(generated, synthetic_rows[0], synthetic_rows[-1])
+    # У текстов раздела нет тегов генератора.
+    if stage != "section":
+        lines.append("  по тегам, слабая → бейзлайн, сверху самые различающие:")
+        lines += by_tag(generated, synthetic_rows[0], synthetic_rows[-1])
     return lines
 
 

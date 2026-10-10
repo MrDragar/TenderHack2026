@@ -22,14 +22,13 @@ from contracts.ref import Portal, Position
 from pipeline.run import portal, reference
 from pipeline.values import same, show
 from scripts.generate import generate, section_texts, siblings
+from scripts.products import RAW_DIR, products
 from scripts.stages import (
     GENERATED,
-    RAW_DIR,
     SECTIONS,
     described,
     fixed_chars,
-    portal_names,
-    products,
+    glued,
     same_pair,
     template_of,
     templates,
@@ -106,25 +105,33 @@ def candidates_items(find: Stage, ref: list[Position], _: Portal, test: bool) ->
 def section_items(
     find_section: Stage, _: list[Position], sections: Portal, test: bool
 ) -> list[Item]:
-    items = []
+    """Синтетика и названия товаров листа 1 с разделом по совпадению характеристик."""
+    texts = []
     for text, section in section_texts(sections, SECTIONS, test=test):
+        texts.append((text, text, section))
+    for product in products(sections, test=test):
+        if product["section"]:
+            texts.append((f"лист 1: {product['name']}", product["name"], product["section"]))
+    items = []
+    for key, text, section in texts:
         found = find_section(text, sections)
         outcome = "отказ"
         if found is not None:
             outcome = "верно" if found == section else "неверно"
-        items.append(item(text, section, found or "отказ", outcome))
+        items.append(item(key, section, found or "отказ", outcome))
     return items
 
 
 def extract_items(extract: Stage, _: list[Position], sections: Portal, test: bool) -> list[Item]:
     """Пара с другим значением под тем же названием неверна, ненайденная пара это пропуск."""
-    if not RAW_DIR.exists():
+    found = products(sections, test=test)
+    if not found:
         sys.exit(f"Нет листа 1 в {RAW_DIR}, этап extract не измерить")
     items = []
-    for name, pairs in products(portal_names(sections), test=test):
-        text = ", ".join([name] + [f"{n} {v}" for n, v in pairs])
+    for product in found:
+        text = glued(product)[0]
         fragments = extract(text)
-        for pair_name, value in pairs:
+        for pair_name, value in product["pairs"]:
             same_name = []
             for fragment in fragments:
                 if (fragment["name"] or "").casefold() == pair_name.casefold():

@@ -4,8 +4,6 @@ from pathlib import Path
 from random import Random
 from typing import TypedDict
 
-from openpyxl import load_workbook
-
 from contracts.pipeline import Candidate, FindCandidates, FoundChar, Fragment, Narrowed
 from contracts.ref import Portal, Position
 from pipeline.candidates import find
@@ -19,21 +17,19 @@ from scripts.generate import (
     Generated,
     generate,
     gold_char,
-    held_out,
     inside,
     section_texts,
     siblings,
 )
+from scripts.products import Product, products
 
-RAW_DIR = Path("data/raw/Казань 2026/Примеры выгрузок")
 LAST_DIR = Path("data/eval/last")
 SHOWN_NEW = 5
-SHEETS = ("Одежда.xlsx", "Мебель.xlsx", "Инструменты.xlsx")
-PRODUCTS_PER_SHEET = 200
 GENERATED = 300
 SECTIONS = 300
-
-type Pairs = list[tuple[str, str]]
+LAID_OUT = 50
+CATEGORY_NAMES = {"clothing": "одежда", "furniture": "мебель", "tools": "инструменты"}
+LEVELS = {"ktru": "КТРУ", "portal": "портал", "new": "новые"}
 # Пара это доля: верных и всего.
 type Number = int | float | tuple[int, int]
 
@@ -104,9 +100,13 @@ def template_names(candidates: list[Candidate], by_code: dict[str, Position]) ->
 
 def by_tag(generated: list[Generated], right: list[bool], what: str) -> dict[str, Number]:
     """Каждая порча и форма записи отдельно: видно, на чём именно этап ошибается."""
+    return by_slice([example["tags"] for example in generated], right, what)
+
+
+def by_slice(labels: list[list[str]], right: list[bool], what: str) -> dict[str, Number]:
     counts: dict[str, list[int]] = {}
-    for example, ok in zip(generated, right, strict=True):
-        for tag in example["tags"]:
+    for tags, ok in zip(labels, right, strict=True):
+        for tag in tags:
             pair = counts.setdefault(tag, [0, 0])
             pair[0] += ok
             pair[1] += 1
@@ -170,71 +170,91 @@ def stage2(texts: list[tuple[str, str]], portal: Portal) -> Stage:
     }
 
 
-def products(
-    names: set[str], raw_dir: Path = RAW_DIR, test: bool = False
-) -> list[tuple[str, Pairs]]:
-    """Товары листа 1: название и характеристики через « | ». Между названием характеристики
-    и значением разделителя нет, делим по самому длинному названию из листа 2."""
-    found = []
-    for sheet_name in SHEETS:
-        book = load_workbook(raw_dir / sheet_name, read_only=True)
-        taken = 0
-        for row in book.worksheets[0].iter_rows(min_row=2, values_only=True):
-            if taken == PRODUCTS_PER_SHEET:
-                break
-            if not row[1] or held_out(str(row[1])) != test:
-                continue
-            pairs = split_pairs(str(row[5] or ""), names)
-            if pairs:
-                found.append((str(row[1]), pairs))
-                taken += 1
-        book.close()
-    return found
+def stage2_products(items: list[Product], portal: Portal) -> Stage:
+    """Только название товара: метка взята из названий его характеристик, с ними в тексте
+    ответ был бы подсказан."""
+    labeled = [p for p in items if p["section"]]
+    right = 0
+    refused = 0
+    rights = []
+    failures: list[Failure] = []
+    for item in labeled:
+        found = find_section(item["name"], portal)
+        rights.append(found == item["section"])
+        right += found == item["section"]
+        refused += found is None
+        if found != item["section"]:
+            failures.append(
+                {"text": item["name"], "expected": item["section"] or "", "got": found or "отказ"}
+            )
+    metrics: dict[str, Number] = {
+        "с меткой раздела": (len(labeled), len(items)),
+        "угадан": (right, len(labeled)),
+        "отказ": (refused, len(labeled)),
+        "верно среди ответивших": (right, len(labeled) - refused),
+    }
+    metrics.update(by_slice([slices(p) for p in labeled], rights, "угадан"))
+    return {
+        "key": "stage2_sheet1",
+        "title": "2. Раздел портала на листе 1",
+        "metrics": metrics,
+        "failures": failures,
+    }
 
 
-def portal_names(portal: Portal) -> set[str]:
-    names = set()
-    for chars in portal.values():
-        for char in chars:
-            names.add(char["name"].casefold())
+def slices(item: Product) -> list[str]:
+    return [CATEGORY_NAMES[item["category"]], *item["tags"]]
+
+
+def ktru_names(ref: list[Position]) -> dict[str, set[str]]:
+    """Названия характеристик КТРУ по категориям: пара листа 1 под таким названием
+    должна уйти в КТРУ, остальные в портал или новые."""
+    names: dict[str, set[str]] = {}
+    for position in ref:
+        for char in position["characteristics"]:
+            names.setdefault(position["category"], set()).add(char["name"].casefold())
     return names
 
 
-def split_pairs(line: str, names: set[str]) -> Pairs:
-    pairs = []
-    for part in line.split(" | "):
-        name = longest_prefix(part, names)
-        if name:
-            pairs.append((part[: len(name)], part[len(name) :].strip()))
-    return pairs
+def pair_slices(item: Product, name: str, known: dict[str, set[str]]) -> list[str]:
+    in_ktru = name.casefold() in known.get(item["category"], set())
+    return [*slices(item), "название из КТРУ" if in_ktru else "название не из КТРУ"]
 
 
-def longest_prefix(part: str, names: set[str]) -> str | None:
-    words = part.split()
-    for size in range(len(words) - 1, 0, -1):
-        prefix = " ".join(words[:size])
-        if prefix.casefold() in names:
-            return prefix
-    return None
+def glued(item: Product) -> tuple[str, list[tuple[int, int]]]:
+    """Текст товара и место каждой пары в нём."""
+    text = item["name"]
+    spans = []
+    for name, value in item["pairs"]:
+        text += ", "
+        spans.append((len(text), len(text) + len(name) + 1 + len(value)))
+        text += f"{name} {value}"
+    return text, spans
 
 
-def stage3(items: list[tuple[str, Pairs]]) -> Stage:
+def stage3(items: list[Product], ref: list[Position]) -> Stage:
     """Пара найдена, если есть кусок с тем же названием и значением; числа сравниваем числом.
     Мягко: значение нашлось, а название нет, этап 4 ещё может его привязать."""
+    known = ktru_names(ref)
     expected = 0
     hits = 0
     soft = 0
     named_count = 0
+    labels = []
+    rights = []
     failures: list[Failure] = []
-    for name, pairs in items:
-        text = ", ".join([name] + [f"{n} {v}" for n, v in pairs])
+    for item in items:
+        text = glued(item)[0]
         fragments = extract(text)
         with_name = [f for f in fragments if f["name"]]
         named_count += len(with_name)
         missed = []
-        for pair_name, value in pairs:
+        for pair_name, value in item["pairs"]:
             expected += 1
-            if any(same_pair(f, pair_name, value) for f in with_name):
+            hit = any(same_pair(f, pair_name, value) for f in with_name)
+            labels.append(pair_slices(item, pair_name, known))
+            rights.append(hit)
+            if hit:
                 hits += 1
                 continue
             missed.append(f"{pair_name}: {value}")
@@ -243,17 +263,86 @@ def stage3(items: list[tuple[str, Pairs]]) -> Stage:
         if missed:
             got = [f"{f['name']}: {f['value']}" for f in with_name]
             failures.append({"text": text, "expected": "; ".join(missed), "got": listed(got, 10)})
+    metrics: dict[str, Number] = {
+        "полнота": (hits, expected),
+        "точность": (hits, named_count),
+        "F1": f_score(hits, named_count, expected, 1),
+        "ещё только значение без названия": (soft, expected),
+    }
+    metrics.update(by_slice(labels, rights, "полнота"))
+    return {"key": "stage3", "title": "3. Извлечение", "metrics": metrics, "failures": failures}
+
+
+def layout(items: list[Product], ref: list[Position], portal: Portal) -> Stage:
+    """Живой товар целиком через все этапы: в какой уровень ушла каждая пара листа 1.
+    Точного ответа нет, но пара под названием из КТРУ должна попасть в КТРУ, пара из
+    раздела-метки хотя бы в портал, и ни одна пара не должна потеряться."""
+    known = ktru_names(ref)
+    levels = dict.fromkeys([*LEVELS.values(), "потеряно"], 0)
+    renamed = 0
+    placed = 0
+    ktru_wanted = 0
+    ktru_got = 0
+    section_wanted = 0
+    section_got = 0
+    labels = []
+    rights = []
+    failures: list[Failure] = []
+    for item in laid_out(items):
+        text, spans = glued(item)
+        result = solve(text, ref, portal)
+        bad = []
+        for (name, value), span in zip(item["pairs"], spans, strict=True):
+            char = covering(result["chars"], span)
+            level = LEVELS[char["source"]] if char else "потеряно"
+            levels[level] += 1
+            kept = level in ("КТРУ", "портал")
+            if char:
+                placed += 1
+                renamed += char["name"].casefold() != name.casefold()
+            pair_labels = pair_slices(item, name, known)
+            if "название из КТРУ" in pair_labels:
+                ktru_wanted += 1
+                ktru_got += level == "КТРУ"
+            if item["section"]:
+                section_wanted += 1
+                section_got += kept
+            labels.append(pair_labels)
+            rights.append(kept)
+            if not kept:
+                bad.append(f"{name}: {value} ({level})")
+        if bad:
+            got = f"раздел {result['section'] or 'не найден'}, ждали {item['section'] or '?'}"
+            failures.append({"text": text, "expected": "; ".join(bad), "got": got})
+    total = sum(levels.values())
+    metrics: dict[str, Number] = {}
+    for level, count in levels.items():
+        metrics[f"пары: {level}"] = (count, total)
+    metrics["название приведено к другому"] = (renamed, placed)
+    metrics["название из КТРУ ушло в КТРУ"] = (ktru_got, ktru_wanted)
+    metrics["есть метка раздела: пара в КТРУ или портале"] = (section_got, section_wanted)
+    metrics.update(by_slice(labels, rights, "в КТРУ или портале"))
     return {
-        "key": "stage3",
-        "title": "3. Извлечение",
-        "metrics": {
-            "полнота": (hits, expected),
-            "точность": (hits, named_count),
-            "F1": f_score(hits, named_count, expected, 1),
-            "ещё только значение без названия": (soft, expected),
-        },
+        "key": "layout_sheet1",
+        "title": "Лист 1 целиком: в какой уровень ушла пара",
+        "metrics": metrics,
         "failures": failures,
     }
+
+
+def laid_out(items: list[Product]) -> list[Product]:
+    """Полный прогон медленный, поэтому поровну из каждой категории."""
+    found = []
+    for category in CATEGORY_NAMES:
+        found += [p for p in items if p["category"] == category][:LAID_OUT]
+    return found
+
+
+def covering(chars: list[FoundChar], span: tuple[int, int]) -> FoundChar | None:
+    for char in chars:
+        if span[0] <= char["start"] < span[1]:
+            return char
+    return None
 
 
 def same_pair(item: Fragment, name: str, value: str) -> bool:
@@ -503,8 +592,9 @@ def stages(ref: list[Position], portal: Portal, with_products: bool = True) -> l
     by_code = {p["code"]: p for p in ref}
     generated = generate(ref, GENERATED)
     found = [stage1(generated, ref), stage2(section_texts(portal, SECTIONS), portal)]
-    if with_products and portal and RAW_DIR.exists():
-        found.append(stage3(products(portal_names(portal))))
+    items = products(portal, build=with_products)
+    if items:
+        found += [stage2_products(items, portal), stage3(items, ref), layout(items, ref, portal)]
     found += [
         stage4(generated, by_code, ref),
         stage34(generated, by_code, ref, portal),
