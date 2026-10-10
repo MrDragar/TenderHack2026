@@ -48,7 +48,8 @@ body { min-height: 100vh; display: flex; flex-direction: column; }
 @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
 
 .result { display: grid; grid-template-columns: 360px 1fr; gap: var(--gutter); align-items: start; }
-.result-main { display: grid; gap: var(--gutter); }
+.result-main { display: grid; gap: var(--gutter); min-width: 0; }
+.result > *, .result-main > * { min-width: 0; }
 .result-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
 
 .steps { list-style: none; margin: 24px 0 0; padding: 0; }
@@ -141,4 +142,36 @@ body { min-height: 100vh; display: flex; flex-direction: column; }
   .search .input { flex: none; }
   .chars { display: block; overflow-x: auto; }
   .card { padding: 20px; }
+}
+
+.source-text mark.mark-ok { background: rgba(13, 155, 104, 0.18); }
+.source-text mark.mark-fix { background: rgba(246, 115, 25, 0.22); }
+.source-text mark.mark-bad { background: var(--red-cell-bg); box-shadow: inset 0 -2px var(--red); }
+.source-text mark.mark-new { background: rgba(72, 184, 194, 0.25); }
+.source-text mark { cursor: help; }
+.unknown { margin-top: 12px; color: var(--orange); }
+
+.step-warn .step-num { background: var(--orange); }
+.step-warn .step-what { color: var(--orange); }
+.code-name { margin: 4px 0 0 44px; color: var(--gray); }
+.notice-warn { margin-top: 16px; padding: 12px 16px; background: rgba(246, 115, 25, 0.1); color: var(--dark); border-left: 4px solid var(--orange); }
+.options-codes { flex-direction: column; align-items: stretch; }
+.options-codes .btn { text-align: left; height: auto; padding: 8px 16px; }
+
+.cell-input { height: 36px; width: 100%; min-width: 190px; box-sizing: border-box; }
+.icon-btn { border: 0; background: none; color: var(--gray); cursor: pointer; font-size: 14px; }
+.icon-btn:hover { color: var(--red); }
+.fix-row td { padding-top: 0; font: 400 12px/16px var(--font); color: var(--dark); }
+.fix-row s { color: var(--red); }
+.fix-row b { color: var(--green); }
+.fix-row.mark-bad td { color: var(--red); }
+.row-mark-bad td:first-child { box-shadow: inset 4px 0 var(--red); }
+.row-mark-fix td:first-child { box-shadow: inset 4px 0 var(--orange); }
+.row-missing td:first-child { box-shadow: inset 4px 0 var(--red); color: var(--red); }
+.row-add td { border-bottom: 0; }
+.status-red { color: var(--red); }
+.remark-bad s, .remark-bad b { color: var(--red); }
+
+@media (max-width: 520px) {
+  .auth .btn-red { display: none; }
 }

@@ -1,20 +1,22 @@
 from contracts.pipeline import Candidates
 from contracts.ref import Position
-from pipeline.text import stems
+from pipeline.text import correct, stems, vocabulary, without_pairs, words
 
 MIN_SHARE = 0.5
 
 
 def find(text: str, ref: list[Position]) -> Candidates:
     """Конечные коды с лучшим совпадением названия, пусто, если совпало меньше половины."""
-    text_stems = stems(text)
+    finals = [p for p in ref if p["position_type"] == "final"]
+    vocab = vocabulary(p["name"] for p in finals)
+    text_stems = {word["stem"] for word in correct(words(without_pairs(text)), vocab)}
     if not text_stems:
         return {"category": None, "candidates": []}
 
     ranked = []
-    for position in ref:
+    for position in finals:
         name_stems = stems(position["name"])
-        if position["position_type"] == "final" and name_stems:
+        if name_stems:
             ranked.append((rank(name_stems, text_stems), position))
     if not ranked:
         return {"category": None, "candidates": []}

@@ -15,18 +15,28 @@ class Candidates(TypedDict):
     candidates: list[Candidate]
 
 
+type FixKind = Literal[
+    "typo", "layout", "unit", "wrong_unit", "out_of_range", "not_in_list", "conflict"
+]
+
+
 class FoundChar(TypedDict):
     name: str
     value: str | int | float
     unit: Unit | None
     source: Literal["ktru", "portal", "new"]
     fragment: str
+    start: int
+    end: int
+    required: bool
     fix: str | None
+    kind: FixKind | None
 
 
 class Step(TypedDict):
     what: str
     left: int
+    ignored: bool
 
 
 class Question(TypedDict):
@@ -38,6 +48,7 @@ class Remark(TypedDict):
     was: str
     now: str
     why: str
+    kind: FixKind
 
 
 class Result(TypedDict):
@@ -48,6 +59,9 @@ class Result(TypedDict):
     question: Question | None
     missing_required: list[str]
     remarks: list[Remark]
+    candidates: list[Candidate]
+    options: dict[str, list[str]]
+    unknown: list[str]
 
 
 type FindCandidates = Callable[[str, list[Position]], Candidates]

@@ -41,9 +41,13 @@
       </div>
       <div class="examples p6 muted">
         Примеры:
+        <button type="button" class="example">Стол офисный, ДСП, высота метр десять, цвет красный</button>
         <button type="button" class="example">Молоток слесарный 500 г</button>
         <button type="button" class="example">Стол письменный, столешница ЛДСП</button>
-        <button type="button" class="example">Брюки мужские рабочие</button>
+        <button type="button" class="example">Джемпер рост 1,7</button>
+        <button type="button" class="example">Блузка женская, рост 300 см</button>
+        <button type="button" class="example">cnjk письменный деревяный, столешница 2,2 см</button>
+        <button type="button" class="example">Стол письменный, Тип каркаса: пластик, цвет: красный</button>
       </div>
       <div id="loading" class="progress loading" hidden><span></span></div>
     </form>
@@ -68,15 +72,15 @@
 
         <section id="missing" class="card missing" hidden>
           <div class="missing-head p2"><i class="mark-icon">!</i>Заполните обязательные характеристики</div>
-          <p class="p6 muted">Нажмите на характеристику, чтобы дописать её в описание.</p>
-          <div id="missing-list" class="tags"></div>
+          <p id="missing-list" class="p5"></p>
+          <p class="p6 muted">Выберите значения в таблице характеристик ниже, описание допишется само.</p>
         </section>
 
         <section class="card">
           <h4>Характеристики</h4>
           <table class="table chars">
             <thead>
-              <tr><th>Характеристика</th><th>Значение</th><th>Ед. измерения</th><th>Источник</th><th>Фрагмент текста</th></tr>
+              <tr><th>Характеристика</th><th>Из текста</th><th>Значение</th><th>Ед. измерения</th><th>Источник</th><th></th></tr>
             </thead>
             <tbody id="chars"></tbody>
           </table>

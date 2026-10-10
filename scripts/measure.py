@@ -18,8 +18,8 @@ from contracts.pipeline import (
 )
 from contracts.ref import Portal, Position
 from pipeline.chars import extract
-from pipeline.narrow import show
 from pipeline.run import run
+from pipeline.values import show
 
 DEFAULT_GOLD_PATH = Path("data/eval/gold.json")
 MAX_QUESTIONS = 3
@@ -307,7 +307,11 @@ def gold_char(char: ExpectedChar) -> FoundChar:
         "unit": None,
         "source": "ktru",
         "fragment": "",
+        "start": 0,
+        "end": 0,
+        "required": False,
         "fix": None,
+        "kind": None,
     }
 
 

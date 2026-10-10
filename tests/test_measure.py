@@ -44,7 +44,11 @@ def found(name: str, value: str | int | float) -> FoundChar:
         "unit": None,
         "source": "ktru",
         "fragment": name,
+        "start": 0,
+        "end": 0,
+        "required": False,
         "fix": None,
+        "kind": None,
     }
 
 
@@ -57,6 +61,9 @@ def result(code: str | None, question: Question | None = None) -> Result:
         "question": question,
         "missing_required": [],
         "remarks": [],
+        "candidates": [],
+        "options": {},
+        "unknown": [],
     }
 
 
