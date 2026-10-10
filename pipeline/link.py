@@ -21,6 +21,8 @@ class Match(TypedDict):
     start: int
     end: int
     value_words: int
+    wanted_words: int
+    exact_words: int
     name_words: int
     required: bool
     fix: FixKind | None
@@ -216,7 +218,7 @@ def text_values(
             matches += find_matches(item, told, portal_chars, "portal")
 
     best: dict[str, Match] = {}
-    for match in best_per_fragment(matches):
+    for match in without_nested(best_per_fragment(matches)):
         kept = best.get(match["char"])
         # Из двух значений одной характеристики берём значение КТРУ, затем более полное.
         if kept is None or fuller(match) > fuller(kept):
@@ -241,8 +243,13 @@ def text_values(
     return found
 
 
-def fuller(match: Match) -> tuple[bool, int]:
-    return match["source"] == "ktru", match["value_words"]
+def fuller(match: Match) -> tuple[bool, int, int, int]:
+    return (
+        match["source"] == "ktru",
+        match["value_words"],
+        match["exact_words"],
+        -match["wanted_words"],
+    )
 
 
 def word_fix(kind: FixKind | None, value: str, source: Source) -> str | None:
@@ -256,8 +263,10 @@ def word_fix(kind: FixKind | None, value: str, source: Source) -> str | None:
 def find_matches(
     item: Fragment, fragment_words: list[Word], chars: list[Characteristic], source: Source
 ) -> list[Match]:
-    """Все значения, каждое слово которых есть в куске, без выбора. Значение портала берём,
-    только если рядом названа и сама характеристика: в списках портала много мусора."""
+    """Значения, на которые кусок похож: слово значения засчитываем по началу основы, а не
+    целиком, иначе «аккумуляторный» не находит «От аккумуляторных батарей». Нужна хотя бы
+    половина слов значения. Значение портала берём, только если рядом названа и сама
+    характеристика: в списках портала много мусора."""
     text_stems = {word["stem"] for word in fragment_words}
     matches: list[Match] = []
     for char in chars:
@@ -271,9 +280,14 @@ def find_matches(
             # «Размер: Размер 9, l» совпадает с текстом одним названием, это не значение.
             if source == "portal" and value != "Да" and wanted <= stems(char["name"]):
                 continue
-            hits = [word for word in fragment_words if word["stem"] in wanted]
-            if not wanted or {word["stem"] for word in hits} != wanted:
+            hits = [word for word in fragment_words if any(alike(word["stem"], w) for w in wanted)]
+            covered = {w for w in wanted if any(alike(word["stem"], w) for word in hits)}
+            if not wanted or len(covered) * 2 < len(wanted):
                 continue
+            # «Да» ищем по названию характеристики, там половина названия ничего не значит.
+            if value == "Да" and len(covered) < len(wanted):
+                continue
+            exact = sum(1 for w in covered if any(word["stem"] == w for word in hits))
             start = min(word["start"] for word in hits)
             end = max(word["end"] for word in hits)
             fixes = [word["fix"] for word in hits if word["fix"]]
@@ -285,13 +299,23 @@ def find_matches(
                     "fragment": item["text"][start:end],
                     "start": item["start"] + start,
                     "end": item["start"] + end,
-                    "value_words": len(wanted),
+                    "value_words": len(covered),
+                    "wanted_words": len(wanted),
+                    "exact_words": exact,
                     "name_words": name_words,
                     "required": char["required"],
                     "fix": fixes[0] if fixes else None,
                 }
             )
     return matches
+
+
+def alike(one: str, other: str) -> bool:
+    """Основы совпали или одна продолжает другую: «аккуму» и «аккумуляторных», «сет» и «сетев»."""
+    if one == other:
+        return True
+    short, long = (one, other) if len(one) <= len(other) else (other, one)
+    return len(short) >= 3 and long.startswith(short)
 
 
 def searched_text(char: Characteristic, value: str) -> str:
@@ -310,12 +334,26 @@ def best_per_fragment(matches: list[Match]) -> list[Match]:
     return [max(group, key=strength) for group in by_fragment.values()]
 
 
-def strength(match: Match) -> tuple[bool, int, int, bool, int]:
-    """КТРУ побеждает портал, затем полнота значения, слова названия в тексте, обязательная,
-    затем короче: из «Красный» и «3022 красная» верно первое."""
+def without_nested(matches: list[Match]) -> list[Match]:
+    """Кусок внутри более длинного куска не отдельное значение: «натуральной» внутри
+    «натуральной кожи» не даёт второй характеристики."""
+    ordered = sorted(matches, key=lambda m: (m["end"] - m["start"], strength(m)), reverse=True)
+    kept: list[Match] = []
+    for match in ordered:
+        if not any(k["start"] <= match["start"] and match["end"] <= k["end"] for k in kept):
+            kept.append(match)
+    return kept
+
+
+def strength(match: Match) -> tuple[bool, int, int, int, int, bool, int]:
+    """КТРУ побеждает портал, затем больше слов значения и меньше лишних в нём, точнее совпали
+    основы, слова названия в тексте, обязательная, затем короче: из «Красный» и «3022
+    красная» верно первое."""
     return (
         match["source"] == "ktru",
         match["value_words"],
+        match["exact_words"],
+        -match["wanted_words"],
         match["name_words"],
         match["required"],
         -len(match["value"]),

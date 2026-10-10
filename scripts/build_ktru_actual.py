@@ -40,23 +40,11 @@ def version_key(value: str | None) -> tuple[tuple[int, str], ...]:
     )
 
 
-def code_suffix(code: str) -> int:
-    suffix = code.rsplit("-", 1)[-1]
-    if not suffix.isdigit():
-        raise ValueError(f"В коде КТРУ нет числового суффикса: {code}")
-    return int(suffix)
-
-
-def position_name_key(name: str) -> str:
-    return " ".join(name.split()).casefold()
-
-
 def position_rank(
-    code: str,
     position_type: str,
     version: str | None,
-) -> tuple[bool, int, tuple[tuple[int, str], ...], str]:
-    return position_type == "final", code_suffix(code), version_key(version), code
+) -> tuple[bool, tuple[tuple[int, str], ...]]:
+    return position_type == "final", version_key(version)
 
 
 def child(element: ElementTree.Element | None, name: str) -> ElementTree.Element | None:
@@ -277,15 +265,13 @@ def build(
                 continue
             normalized = normalize_position(data, category)
             code = normalized["code"]
-            name_key = position_name_key(name)
             candidate_rank = position_rank(
-                code,
                 normalized["position_type"],
                 text(data, "version"),
             )
-            if name_key not in selected or candidate_rank > selected_ranks[name_key]:
-                selected[name_key] = normalized
-                selected_ranks[name_key] = candidate_rank
+            if code not in selected or candidate_rank > selected_ranks[code]:
+                selected[code] = normalized
+                selected_ranks[code] = candidate_rank
 
     output_positions = sorted(
         selected.values(),
@@ -327,7 +313,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Собирает рабочий справочник КТРУ для одежды, мебели и инструментов."
     )
-    parser.add_argument("--input", type=Path, default=Path("data/raw/Казань 2026/КТРУ/КТРУ"))
+    parser.add_argument("--input", type=Path, default=Path("data/raw/Казань 2026/КТРУ"))
     parser.add_argument(
         "--output",
         type=Path,
