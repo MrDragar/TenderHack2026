@@ -48,3 +48,18 @@ class PortalChar(TypedDict):
 
 
 type Portal = dict[str, list[PortalChar]]
+
+
+type LearnedContextKind = Literal["ktru_family", "portal_category", "free_product"]
+type LearnedValueType = Literal["text", "number", "boolean"]
+
+
+class LearnedCharacteristic(TypedDict):
+    id: int
+    context_kind: LearnedContextKind
+    context_key: str
+    name: str
+    aliases: list[str]
+    value_type: LearnedValueType
+    unit: Unit | None
+    confirmations: int

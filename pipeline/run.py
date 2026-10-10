@@ -64,4 +64,6 @@ def known(found: Candidates, ref: list[Position]) -> set[str]:
 
 
 if __name__ == "__main__":
-    print(json.dumps(run(" ".join(sys.argv[1:])), ensure_ascii=False, indent=2))
+    from pipeline.semantic import run as semantic_run
+
+    print(json.dumps(semantic_run(" ".join(sys.argv[1:])), ensure_ascii=False, indent=2))

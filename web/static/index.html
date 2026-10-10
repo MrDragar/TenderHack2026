@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Подбор кода КТРУ</title>
-  <link rel="stylesheet" href="tokens.css">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="/tokens.css?v=semantic-1">
+  <link rel="stylesheet" href="/style.css?v=semantic-1">
 </head>
 <body>
   <header class="header">
@@ -70,6 +70,16 @@
           <div id="source-text" class="source-text p4"></div>
         </section>
 
+        <section id="corrected-card" class="card" hidden>
+          <h4>Исправленное описание</h4>
+          <div id="corrected-text" class="corrected-text p4"></div>
+        </section>
+
+        <section id="questions-card" class="card" hidden>
+          <h4>Уточнения</h4>
+          <div id="questions" class="questions-list"></div>
+        </section>
+
         <section id="missing" class="card missing" hidden>
           <div class="missing-head p2"><i class="mark-icon">!</i>Заполните обязательные характеристики</div>
           <p id="missing-list" class="p5"></p>
@@ -88,8 +98,18 @@
         </section>
 
         <section id="remarks-card" class="card" hidden>
-          <h4>Исправления</h4>
+          <h4>Исправления в тексте</h4>
           <ul id="remarks" class="remarks"></ul>
+        </section>
+
+        <section id="rejected-card" class="card" hidden>
+          <h4>Не вошло в результат</h4>
+          <ul id="rejected" class="rejected-list"></ul>
+        </section>
+
+        <section id="learning-card" class="card" hidden>
+          <h4>Новые характеристики</h4>
+          <ul id="learning" class="learning-list"></ul>
         </section>
       </div>
     </div>
@@ -124,6 +144,6 @@
     </div>
   </footer>
 
-  <script src="app.js"></script>
+  <script src="/app.js?v=semantic-1"></script>
 </body>
 </html>

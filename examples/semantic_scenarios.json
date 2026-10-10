@@ -1,0 +1,231 @@
+[
+  {
+    "id": "clean_ktru_and_portal",
+    "tags": ["clean", "ktru", "portal", "unit"],
+    "turns": [
+      {
+        "text": "Стол письменный металлический, высота 0,75 м, ширина 1200 мм, Цвет: серый",
+        "learn": false,
+        "expected": {
+          "mode": "ready",
+          "code": "metal",
+          "chars": [
+            {"name": "Тип каркаса", "value": "Металлический", "unit": null, "source": "ktru"},
+            {"name": "Высота", "value": 750, "unit": "003", "source": "ktru"},
+            {"name": "Ширина", "value": 1200, "unit": "003", "source": "ktru"},
+            {"name": "Цвет", "value": "Серый", "unit": null, "source": "portal"}
+          ],
+          "rejected": [],
+          "corrections": [
+            {"was": "0,75 м", "now": "750 миллиметр", "kind": "unit"}
+          ],
+          "questions": [],
+          "writes": [],
+          "corrected_text": "Стол письменный металлический, высота 750 миллиметр, ширина 1200 мм, Цвет: серый"
+        }
+      }
+    ]
+  },
+  {
+    "id": "teach_reject_and_reuse",
+    "tags": ["typo", "layout", "garbage", "learning", "required"],
+    "turns": [
+      {
+        "text": "cnjk письмениый, металический, высота 0,75 м, Цвет: серый, Кромка столешницы: АБС, вкус: клубничный",
+        "learn": true,
+        "expected": {
+          "mode": "needs_input",
+          "code": "metal",
+          "chars": [
+            {"name": "Тип каркаса", "value": "Металлический", "unit": null, "source": "ktru"},
+            {"name": "Высота", "value": 750, "unit": "003", "source": "ktru"},
+            {"name": "Цвет", "value": "Серый", "unit": null, "source": "portal"},
+            {"name": "Кромка столешницы", "value": "АБС", "unit": null, "source": "new"}
+          ],
+          "rejected": ["вкус: клубничный"],
+          "corrections": [
+            {"was": "cnjk", "now": "стол", "kind": "layout"},
+            {"was": "письмениый", "now": "письменный", "kind": "typo"},
+            {"was": "металический", "now": "Металлический", "kind": "typo"},
+            {"was": "0,75 м", "now": "750 миллиметр", "kind": "unit"}
+          ],
+          "questions": [
+            {"char": "Ширина", "kind": "required"}
+          ],
+          "writes": [
+            {"scope": "семейство КТРУ: desk", "name": "Кромка столешницы"}
+          ]
+        }
+      },
+      {
+        "text": "Стол письменный металлический, Кромка столешницы: ПВХ",
+        "learn": false,
+        "restart": true,
+        "expected": {
+          "mode": "needs_input",
+          "code": "metal",
+          "chars": [
+            {"name": "Тип каркаса", "value": "Металлический", "unit": null, "source": "ktru"},
+            {"name": "Кромка столешницы", "value": "ПВХ", "unit": null, "source": "learned"}
+          ],
+          "rejected": [],
+          "corrections": [],
+          "questions": [
+            {"char": "Высота", "kind": "required"},
+            {"char": "Ширина", "kind": "required"}
+          ],
+          "writes": []
+        }
+      }
+    ]
+  },
+  {
+    "id": "ambiguous_ktru",
+    "tags": ["ambiguity", "question"],
+    "turns": [
+      {
+        "text": "Стол письменный",
+        "learn": false,
+        "expected": {
+          "mode": "needs_input",
+          "code": null,
+          "chars": [],
+          "rejected": [],
+          "corrections": [],
+          "questions": [
+            {"char": "Тип каркаса", "kind": "disambiguation"}
+          ],
+          "writes": []
+        }
+      }
+    ]
+  },
+  {
+    "id": "portal_only_with_new_field",
+    "tags": ["portal_only", "learning"],
+    "turns": [
+      {
+        "text": "Органайзер для инструментов, Цвет: красный, Материал: пластик, Тип защёлки: поворотная",
+        "learn": true,
+        "expected": {
+          "mode": "portal_only",
+          "chars": [
+            {"name": "Цвет", "value": "Красный", "unit": null, "source": "portal"},
+            {"name": "Материал", "value": "Пластик", "unit": null, "source": "portal"},
+            {"name": "Тип защёлки", "value": "поворотная", "unit": null, "source": "new"}
+          ],
+          "rejected": [],
+          "corrections": [],
+          "questions": [],
+          "writes": [
+            {"scope": "категория Портала: Органайзеры для инструментов", "name": "Тип защёлки"}
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "outside_both_catalogs",
+    "tags": ["no_reference", "learning", "restart"],
+    "turns": [
+      {
+        "text": "Дрон гоночный, Диагональ рамы: 5 дюймов",
+        "learn": true,
+        "expected": {
+          "mode": "learned_only",
+          "chars": [
+            {"name": "Диагональ рамы", "value": 5, "unit": "039", "source": "new"}
+          ],
+          "rejected": [],
+          "corrections": [],
+          "questions": [],
+          "writes": [
+            {"scope": "вид товара: гоночн дро", "name": "Диагональ рамы"}
+          ]
+        }
+      },
+      {
+        "text": "Дрон гоночный, Диагональ рамы: 6 дюймов",
+        "learn": false,
+        "restart": true,
+        "expected": {
+          "mode": "learned_only",
+          "chars": [
+            {"name": "Диагональ рамы", "value": 6, "unit": "039", "source": "learned"}
+          ],
+          "rejected": [],
+          "corrections": [],
+          "questions": [],
+          "writes": []
+        }
+      }
+    ]
+  },
+  {
+    "id": "scope_isolation",
+    "tags": ["learning", "scope"],
+    "turns": [
+      {
+        "text": "Стол письменный металлический, Кромка столешницы: АБС",
+        "learn": true,
+        "expected": {
+          "mode": "needs_input",
+          "code": "metal",
+          "chars": [
+            {"name": "Тип каркаса", "value": "Металлический", "unit": null, "source": "ktru"},
+            {"name": "Кромка столешницы", "value": "АБС", "unit": null, "source": "new"}
+          ],
+          "rejected": [],
+          "corrections": [],
+          "questions": [
+            {"char": "Высота", "kind": "required"},
+            {"char": "Ширина", "kind": "required"}
+          ],
+          "writes": [
+            {"scope": "семейство КТРУ: desk", "name": "Кромка столешницы"}
+          ]
+        }
+      },
+      {
+        "text": "Кресло офисное на колесах, Кромка столешницы: ПВХ",
+        "learn": false,
+        "expected": {
+          "mode": "ready",
+          "code": "chair",
+          "chars": [
+            {"name": "Тип основания", "value": "На колесах", "unit": null, "source": "ktru"},
+            {"name": "Кромка столешницы", "value": "ПВХ", "unit": null, "source": "new"}
+          ],
+          "rejected": [],
+          "corrections": [],
+          "questions": [],
+          "writes": []
+        }
+      }
+    ]
+  },
+  {
+    "id": "garbage_never_written",
+    "tags": ["garbage", "poisoning"],
+    "turns": [
+      {
+        "text": "Стол, вкус: клубничный, лучший: да, скидка: 20%",
+        "learn": true,
+        "expected": {
+          "mode": "needs_input",
+          "chars": [],
+          "rejected": [
+            "вкус: клубничный",
+            "лучший: да",
+            "скидка: 20%"
+          ],
+          "corrections": [],
+          "questions": [
+            {"char": "Тип каркаса", "kind": "disambiguation"}
+          ],
+          "writes": []
+        }
+      }
+    ]
+  }
+]
