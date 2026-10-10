@@ -6,7 +6,11 @@
       "Bash(git commit *)",
       "Bash(git push *)",
       "Read(.env)",
-      "Edit(.env)"
+      "Edit(.env)",
+      "Read(data/eval/test/**)",
+      "Edit(data/eval/**)",
+      "Edit(scripts/judge.py)",
+      "Edit(scripts/generate.py)"
     ],
     "ask": [
       "Bash(docker *)",

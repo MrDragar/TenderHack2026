@@ -14,7 +14,15 @@ from pipeline.link import link
 from pipeline.narrow import narrow
 from pipeline.section import find_section
 from pipeline.values import same, show
-from scripts.generate import Generated, generate, gold_char, inside, section_texts, siblings
+from scripts.generate import (
+    Generated,
+    generate,
+    gold_char,
+    held_out,
+    inside,
+    section_texts,
+    siblings,
+)
 
 RAW_DIR = Path("data/raw/Казань 2026/Примеры выгрузок")
 LAST_DIR = Path("data/eval/last")
@@ -141,7 +149,9 @@ def stage2(texts: list[tuple[str, str]], portal: Portal) -> Stage:
     }
 
 
-def products(names: set[str], raw_dir: Path = RAW_DIR) -> list[tuple[str, Pairs]]:
+def products(
+    names: set[str], raw_dir: Path = RAW_DIR, test: bool = False
+) -> list[tuple[str, Pairs]]:
     """Товары листа 1: название и характеристики через « | ». Между названием характеристики
     и значением разделителя нет, делим по самому длинному названию из листа 2."""
     found = []
@@ -151,12 +161,22 @@ def products(names: set[str], raw_dir: Path = RAW_DIR) -> list[tuple[str, Pairs]
         for row in book.worksheets[0].iter_rows(min_row=2, values_only=True):
             if taken == PRODUCTS_PER_SHEET:
                 break
+            if not row[1] or held_out(str(row[1])) != test:
+                continue
             pairs = split_pairs(str(row[5] or ""), names)
-            if row[1] and pairs:
+            if pairs:
                 found.append((str(row[1]), pairs))
                 taken += 1
         book.close()
     return found
+
+
+def portal_names(portal: Portal) -> set[str]:
+    names = set()
+    for chars in portal.values():
+        for char in chars:
+            names.add(char["name"].casefold())
+    return names
 
 
 def split_pairs(line: str, names: set[str]) -> Pairs:
@@ -418,11 +438,7 @@ def stages(ref: list[Position], portal: Portal, with_products: bool = True) -> l
     generated = generate(ref, GENERATED)
     found = [stage1(generated, ref), stage2(section_texts(portal, SECTIONS), portal)]
     if with_products and portal and RAW_DIR.exists():
-        names = set()
-        for chars in portal.values():
-            for char in chars:
-                names.add(char["name"].casefold())
-        found.append(stage3(products(names)))
+        found.append(stage3(products(portal_names(portal))))
     found += [stage4(generated, by_code, ref), stage5(generated, by_code, ref)]
     return found
 

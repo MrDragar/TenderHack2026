@@ -25,6 +25,7 @@ from scripts.stages import Failure, Stage, compare
 from scripts.stages import report as stages_table
 
 DEFAULT_GOLD_PATH = Path("data/eval/gold.json")
+TEST_GOLD_PATH = Path("data/eval/test/gold.json")
 MAX_QUESTIONS = 3
 RECALL_AT = (1, 5, 20)
 
@@ -395,6 +396,10 @@ if __name__ == "__main__":
     def find_codes(text: str) -> list[str]:
         return [c["code"] for c in find(text, ref)]
 
+    if "--test" in sys.argv:
+        # Отложенные фразы: только итоговые числа, сами примеры не видит никто.
+        print(stages_report(ladder(load_gold(TEST_GOLD_PATH), find_codes, by_code)))
+        sys.exit()
     paths = [arg for arg in sys.argv[1:] if not arg.startswith("--")]
     path = Path(paths[0]) if paths else DEFAULT_GOLD_PATH
     rows = ladder(load_gold(path), find_codes, by_code)

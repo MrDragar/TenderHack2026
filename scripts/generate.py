@@ -1,5 +1,6 @@
 import json
 import sys
+import zlib
 from random import Random
 from typing import Literal, TypedDict
 
@@ -31,11 +32,20 @@ class Piece(TypedDict):
     char: ExpectedChar | None
 
 
-def generate(ref: list[Position], count: int, seed: int = 0) -> list[Generated]:
+def held_out(key: str) -> bool:
+    """Пятая часть позиций, разделов и товаров в test. Делим по ним, а не по текстам: иначе
+    правило, подогнанное под позицию из dev, проверится на той же позиции."""
+    return zlib.crc32(key.encode()) % 5 == 1
+
+
+def generate(ref: list[Position], count: int, seed: int = 0, test: bool = False) -> list[Generated]:
     """Тексты с известным ответом: позиция, куски, что из них должно получиться и какая
     порча внесена. Порча из таблицы architecture.md, кроме синонимов: их списка нет."""
     rng = Random(seed)
-    finals = [p for p in ref if p["position_type"] == "final"]
+    finals = []
+    for position in ref:
+        if position["position_type"] == "final" and held_out(position["code"]) == test:
+            finals.append(position)
     found = []
     for position in rng.sample(finals, min(count, len(finals))):
         found.append(one(position, rng))
@@ -239,11 +249,13 @@ def gold_char(char: ExpectedChar) -> FoundChar:
     }
 
 
-def section_texts(portal: Portal, count: int, seed: int = 0) -> list[tuple[str, str]]:
+def section_texts(
+    portal: Portal, count: int, seed: int = 0, test: bool = False
+) -> list[tuple[str, str]]:
     """Название раздела с порчей. Раздел во множественном числе, а люди пишут в единственном,
     поэтому цифра этапа 2 на таких текстах выше, чем на живых."""
     rng = Random(seed)
-    names = sorted(portal)
+    names = sorted(name for name in portal if held_out(name) == test)
     found = []
     for name in rng.sample(names, min(count, len(names))):
         text = name.lower()
