@@ -15,6 +15,12 @@ dev = [
     "ty>=0.0.85",
 ]
 
+# Модель проверки на мусор. Без группы пайплайн работает, новое уходит модератору.
+nli = [
+    "torch>=2.9",
+    "transformers>=4.57",
+]
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
