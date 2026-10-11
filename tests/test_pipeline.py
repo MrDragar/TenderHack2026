@@ -97,6 +97,15 @@ def test_several_candidates_give_question():
     assert result["missing_required"] == ["Тип каркаса"]
 
 
+def test_indistinguishable_codes_give_first_without_question():
+    twins = [desk("wood", "Деревянный"), desk("wood-2", "Деревянный")]
+    result = solve("письменного стола", twins, {}, judge=no_model)
+
+    assert result["code"] == "wood"
+    assert result["question"] is None
+    assert result["steps"][-1]["what"] == "Не различаются: wood, wood-2, взяли первый"
+
+
 def test_empty_and_unknown_text_give_no_candidates():
     for text in ["", "   ", "шины летние"]:
         result = run(text)

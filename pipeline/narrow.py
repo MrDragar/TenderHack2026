@@ -1,4 +1,5 @@
 """Код это argmax P(код | значения), ответ при P > 1/2, иначе вопрос с наибольшим приростом знания.
+Коды, которые не разделяет ни одна характеристика, считаются одним ответом: вопрос о них бесполезен.
 
 Значение, подходящее коду, весит 1 / число его значений; кода без такой характеристики
 1 / число значений у соседей; не подходит, ноль. Вопрос выбирается по ожидаемому снижению
@@ -42,11 +43,19 @@ def narrow(candidates: list[Candidate], chars: list[FoundChar], ref: list[Positi
     )
     best = left[0]["code"] if left else None
     sure = best is not None and posterior[best] > 1 / 2
+    question = ask(left, posterior) if left and not sure else None
+    if left and not sure and question is None:
+        # Ни одна характеристика не разделяет коды, человеку не на что опереться при ответе.
+        codes = listed([p["code"] for p in left])
+        steps.append(
+            {"what": f"Не различаются: {codes}, взяли первый", "left": 1, "ignored": False}
+        )
+        sure = True
     return {
         "category": category,
         "steps": steps,
         "code": best if sure else None,
-        "question": ask(left, posterior) if left and not sure else None,
+        "question": question,
         "missing_required": missing_required(left, chars),
         "candidates": [
             {"code": p["code"], "name": p["name"], "score": posterior[p["code"]]} for p in left
@@ -91,8 +100,9 @@ def proportional(old: dict[str, float], new: dict[str, float]) -> bool:
     return len(ratios) == 1
 
 
-def ask(left: list[Position], posterior: dict[str, float]) -> Question:
-    """Вопрос, ответ на который в среднем больше всего снижает энтропию вероятностей кодов."""
+def ask(left: list[Position], posterior: dict[str, float]) -> Question | None:
+    """Вопрос, ответ на который в среднем больше всего снижает энтропию вероятностей кодов.
+    None, если ни один ответ её не снижает."""
     names = {c["name"]: c["selection"] for p in left for c in p["characteristics"] if c["values"]}
     best: tuple[float, bool, str] | None = None
     for name, selection in names.items():
@@ -101,7 +111,7 @@ def ask(left: list[Position], posterior: dict[str, float]) -> Question:
         if best is None or key > best:
             best = key
     if best is None or best[0] <= 0:
-        return {"char": "Код КТРУ", "options": [p["code"] for p in left]}
+        return None
     return {"char": best[2], "options": sorted(family_values(left, best[2]))}
 
 
