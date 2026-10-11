@@ -22,6 +22,7 @@ from sklearn.naive_bayes import MultinomialNB
 from sklearn.pipeline import Pipeline, make_pipeline
 
 from contracts.ref import Portal
+from pipeline.data import portal as whole_portal
 from scripts.products import (
     PRODUCTS_PATH,
     RAW_DIR,
@@ -34,6 +35,7 @@ from scripts.products import (
 
 TRAIN_PATH = PRODUCTS_PATH.with_name("section_train.json")
 MIN_PROBA = 0.5
+OTHER = ""
 
 
 def find_section(text: str, portal: Portal) -> str | None:
@@ -42,14 +44,17 @@ def find_section(text: str, portal: Portal) -> str | None:
     model, temperature = trained(tuple(sorted(portal)))
     proba = softmax(model.predict_log_proba([text])[0] / temperature)
     best = proba.argmax()
-    return str(model.classes_[best]) if proba[best] >= MIN_PROBA else None
+    if proba[best] < MIN_PROBA or model.classes_[best] == OTHER:
+        return None
+    return str(model.classes_[best])
 
 
 @cache
 def trained(sections: tuple[str, ...]) -> tuple[Pipeline, float]:
-    found, sorts = labeled(sections)
+    found, sorts = labeled()
     names = np.array(found)
-    labels = np.array(sorts)
+    # Товары чужих разделов это исход «не из этих разделов»: без него модели некуда отказаться.
+    labels = np.array([sort if sort in sections else OTHER for sort in sorts])
     # Одинаковые названия по одну сторону, иначе температура меряется на выученном.
     split = GroupShuffleSplit(n_splits=1, test_size=0.1, random_state=0)
     fit, held = next(split.split(names, labels, groups=names))
@@ -73,11 +78,10 @@ def trained(sections: tuple[str, ...]) -> tuple[Pipeline, float]:
     return model, minimize_scalar(loss, bounds=(0.1, 50), method="bounded").x
 
 
-def labeled(sections: tuple[str, ...]) -> tuple[list[str], list[str]]:
+def labeled() -> tuple[list[str], list[str]]:
     if not TRAIN_PATH.exists():
-        TRAIN_PATH.write_text(json.dumps(read_sheets(set(sections)), ensure_ascii=False))
-    # Файл собран по всему листу 2, а спросить могут о части разделов.
-    rows = [row for row in json.loads(TRAIN_PATH.read_text()) if row[1] in sections]
+        TRAIN_PATH.write_text(json.dumps(read_sheets(set(whole_portal())), ensure_ascii=False))
+    rows = json.loads(TRAIN_PATH.read_text())
     return [name for name, _ in rows], [section for _, section in rows]
 
 

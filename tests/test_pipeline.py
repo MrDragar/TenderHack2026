@@ -208,9 +208,7 @@ def test_leftover_ad_is_marked_trash():
 def test_leftover_without_model_goes_to_moderator():
     result = run("Стол письменный деревянный, с ящиком")
 
-    assert [(u["text"], u["check"]["verdict"]) for u in result["unknown"]] == [
-        ("ящиком", "unsure")
-    ]
+    assert [(u["text"], u["check"]["verdict"]) for u in result["unknown"]] == [("ящиком", "unsure")]
 
 
 def test_trash_new_char_is_not_created():
@@ -270,8 +268,13 @@ def test_extract_empty_text():
     assert extract(" , ;") == []
 
 
+def desks_section(text: str, portal: Portal) -> str:
+    return "Столы письменные"
+
+
 def test_portal_value_when_ktru_has_no_such_char():
-    result = run("Стол письменный деревянный, цвет красный, вес 500 г", PORTAL)
+    text = "Стол письменный деревянный, цвет красный, вес 500 г"
+    result = solve(text, REF, PORTAL, find_section=desks_section, judge=no_model)
 
     by_name = {c["name"]: c for c in result["chars"]}
     assert by_name["Цвет"]["source"] == "portal"
