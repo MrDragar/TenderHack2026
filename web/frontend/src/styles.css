@@ -161,8 +161,8 @@
 .fix-row s { color: var(--red); }
 .fix-row b { color: var(--green); }
 .fix-row.mark-bad td { color: var(--red); }
-.row-code td { background: var(--pale-blue); }
-.row-code .code { font-weight: 700; }
+.ktru { padding: 20px; background: var(--pale-blue); display: grid; gap: 4px; }
+.ktru-code { color: var(--blue); font: 700 24px/32px var(--font); }
 .row-mark-bad td:first-child { box-shadow: inset 4px 0 var(--red); }
 .row-mark-fix td:first-child { box-shadow: inset 4px 0 var(--orange); }
 .row-missing td:first-child { box-shadow: inset 4px 0 var(--red); color: var(--red); }

@@ -206,8 +206,19 @@ function codeName(result, code) {
   return result.candidates?.find((candidate) => candidate.code === code)?.name || "";
 }
 
+function KtruCode({ code, name }) {
+  return (
+    <div className="ktru">
+      <div className="p6 muted">Код КТРУ</div>
+      <div className="ktru-code">{code}</div>
+      {name && <div className="p5">{name}</div>}
+    </div>
+  );
+}
+
 function Outcome({ result, selectedCode, onAnswer }) {
-  if (selectedCode || result.code) return null;
+  const code = selectedCode || result.code;
+  if (code) return <KtruCode code={code} name={codeName(result, code)} />;
 
   if (result.question) {
     const isCode = result.question.char === CODE_QUESTION;
@@ -289,8 +300,7 @@ function AddCharacteristic({ onAppend }) {
   );
 }
 
-function Characteristics({ result, selectedCode, onRewrite, onAppend }) {
-  const code = selectedCode || result.code;
+function Characteristics({ result, onRewrite, onAppend }) {
   return (
     <section className="card">
       <h4>Характеристики</h4>
@@ -300,16 +310,6 @@ function Characteristics({ result, selectedCode, onRewrite, onAppend }) {
             <tr><th>Характеристика</th><th>Из текста</th><th>Значение</th><th>Ед. измерения</th><th>Источник</th><th /></tr>
           </thead>
           <tbody>
-            {code && (
-              <tr className="row-code">
-                <td>Код КТРУ</td>
-                <td className="fragment">{codeName(result, code)}</td>
-                <td className="code">{code}</td>
-                <td>—</td>
-                <td>—</td>
-                <td />
-              </tr>
-            )}
             {result.chars.map((characteristic) => {
               const [source, sourceClass] = SOURCES[characteristic.source] || [characteristic.source, "status-gray"];
               const kindClass = characteristic.kind ? `row-${markClass(characteristic)}` : "";
@@ -393,7 +393,7 @@ function Result({ text, result, animate, selectedCode, onAnswer, onRewrite, onAp
             <p className="p6 muted">Выберите значения в таблице характеристик ниже, описание допишется само.</p>
           </section>
         )}
-        <Characteristics result={result} selectedCode={selectedCode} onRewrite={onRewrite} onAppend={onAppend} />
+        <Characteristics result={result} onRewrite={onRewrite} onAppend={onAppend} />
         {result.remarks.length > 0 && (
           <section className="card">
             <h4>Исправления</h4>
