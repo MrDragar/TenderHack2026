@@ -138,9 +138,10 @@ def decide(decision: Decision, path: Path = MODERATION) -> None:
 
 
 @cache
-def nli(path: Path | None = None) -> Entail | None:
+def nli(path: Path | None = None, device: str = "cpu") -> Entail | None:
     """Модель с диска: дообученная, если есть, иначе исходная. Без модели или без torch
-    пайплайн работает, а всё новое уходит модератору."""
+    пайплайн работает, а всё новое уходит модератору. Пайплайн на CPU: модели хватает,
+    а видеокарту может занимать обучение."""
     path = path or (TUNED_MODEL if TUNED_MODEL.exists() else BASE_MODEL)
     if not path.exists():
         return None
@@ -149,7 +150,6 @@ def nli(path: Path | None = None) -> Entail | None:
         from transformers import AutoModelForSequenceClassification, AutoTokenizer
     except ImportError:
         return None
-    device = "cuda" if torch.cuda.is_available() else "cpu"
     tokenizer = AutoTokenizer.from_pretrained(path)
     model = AutoModelForSequenceClassification.from_pretrained(path).to(device).eval()
     entailment = entailment_id(model.config.id2label)

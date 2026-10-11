@@ -76,9 +76,10 @@ def main() -> None:
     parser.add_argument("--model", type=Path, help="папка модели, по умолчанию как в пайплайне")
     parser.add_argument("--limit", type=int, default=2000)
     parser.add_argument("--test", action="store_true")
+    parser.add_argument("--device", default="cpu", help="cuda, если видеокарта свободна")
     args = parser.parse_args()
 
-    entail = nli(args.model)
+    entail = nli(args.model, args.device)
     if entail is None:
         raise SystemExit("Модели нет: uv run python -m scripts.download_nli")
     found = examples(load_data(), load_portal(), [], test=args.test, seed=1)[: args.limit]
