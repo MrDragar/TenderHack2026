@@ -90,7 +90,8 @@ def product(row: tuple, category: Category, pairs: Pairs, sections: dict[str, se
         "pairs": pairs,
         "section": weak_section(pairs, sections),
         "tags": tags(name),
-        "test": held_out(str(row[0])),
+        # Свой ключ: в выборку берём crc32 % 100 == 0, а с ним остаток от 5 всегда 0.
+        "test": held_out(f"товар {row[0]}"),
     }
 
 
