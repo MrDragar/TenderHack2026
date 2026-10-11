@@ -1,8 +1,10 @@
 import httpx
 import pytest
 
-import web.server
-from web.server import answer, moderate
+import web.backend.main
+from web.backend.main import MAX_ROWS, app, csv_texts
+
+pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture
@@ -63,28 +65,39 @@ async def test_pipeline_crash(monkeypatch):
     assert response.json() == {"error": "Не удалось разобрать описание"}
 
 
-def test_passes_stripped_text(monkeypatch):
-    monkeypatch.setattr(web.server, "run", lambda text: {"text": text})
-    assert answer(request("  стол  ")) == (200, {"text": "стол"})
+async def test_passes_stripped_text(monkeypatch):
+    monkeypatch.setattr(web.backend.main, "run", lambda text: {"text": text})
+    response = await request("  стол  ")
+    assert response.json() == {"text": "стол"}
 
 
-def decision(**changed) -> bytes:
-    sent = {"told": "ручка", "name": "Ручка", "product": "Молоток", "approved": True}
-    return json.dumps(sent | changed).encode()
+def test_csv_skips_header_and_empty_rows():
+    raw = "Наименование товара\nСтол письменный, ДСП\n\n  \nМолоток 500 г\n".encode()
+    assert csv_texts(raw) == ["Стол письменный, ДСП", "Молоток 500 г"]
 
 
-def test_moderate_saves_decision(monkeypatch):
-    saved = []
-    monkeypatch.setattr(web.server, "decide", saved.append)
-
-    assert moderate(decision(told=" ручка ")) == (200, {"ok": True})
-    assert saved == [{"told": "ручка", "name": "Ручка", "product": "Молоток", "approved": True}]
+def test_csv_from_excel_and_quoted():
+    assert csv_texts("\ufeffСтол; лишнее\r\nСтул\r\n".encode()) == ["Стол", "Стул"]
+    assert csv_texts("Стол, дерево".encode("cp1251")) == ["Стол, дерево"]
+    assert csv_texts('"Стол; ""Лофт"""\n'.encode()) == ['Стол; "Лофт"']
 
 
-def test_moderate_rejects_broken_input(monkeypatch):
-    monkeypatch.setattr(web.server, "decide", lambda d: None)
+async def upload(content: bytes):
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        return await client.post("/api/csv", content=content)
 
-    assert moderate(b"not json")[0] == 400
-    assert moderate(b"[]")[0] == 400
-    assert moderate(decision(name="  "))[0] == 400
-    assert moderate(decision(approved="да"))[0] == 400
+
+async def test_csv_endpoint():
+    response = await upload("Наименование товара\nСтол\nСтул".encode())
+    assert response.json() == {"texts": ["Стол", "Стул"]}
+
+
+async def test_csv_empty_or_too_big():
+    for content in [b"", "Наименование товара\n".encode()]:
+        response = await upload(content)
+        assert response.status_code == 400
+        assert response.json() == {"error": "В файле нет описаний товаров"}
+
+    response = await upload("\n".join(["стол"] * (MAX_ROWS + 1)).encode())
+    assert response.status_code == 400

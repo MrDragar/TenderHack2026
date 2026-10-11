@@ -415,6 +415,111 @@ function Result({ text, result, animate, selectedCode, onAnswer, onRewrite, onAp
   );
 }
 
+async function postJson(url, body, headers = { "Content-Type": "application/json" }) {
+  const response = await fetch(url, { method: "POST", headers, body });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error);
+  return data;
+}
+
+function BatchForm({ onStart, onItem }) {
+  const [error, setError] = useState("");
+  const [progress, setProgress] = useState(null);
+  const runId = useRef(0);
+
+  const upload = async (event) => {
+    const file = event.target.files[0];
+    event.target.value = "";
+    if (!file) return;
+    const id = ++runId.current;
+    setError("");
+    setProgress(null);
+    onStart();
+    let texts;
+    try {
+      texts = (await postJson("/api/csv", file, { "Content-Type": "text/csv" })).texts;
+    } catch (failure) {
+      setError(failure.name === "Error" ? failure.message : "Сервер не отвечает, попробуйте ещё раз");
+      return;
+    }
+    if (id !== runId.current) return;
+    setProgress({ done: 0, total: texts.length });
+    for (const [index, text] of texts.entries()) {
+      let item;
+      try {
+        item = { text, result: await postJson("/api/run", JSON.stringify({ text })) };
+      } catch (failure) {
+        item = { text, error: failure.name === "Error" ? failure.message : "Сервер не отвечает" };
+      }
+      if (id !== runId.current) return;
+      onItem(item);
+      setProgress({ done: index + 1, total: texts.length });
+    }
+  };
+
+  const running = progress && progress.done < progress.total;
+  return (
+    <div className="card batch-form">
+      <div className="label-row">
+        <div>
+          <div className="label">Проверить много описаний сразу</div>
+          <div className="p6 muted">CSV с одним столбцом «Наименование товара», по описанию в строке</div>
+        </div>
+        {error && <span className="tooltip-error" role="alert">{error}</span>}
+      </div>
+      <label className="btn btn-white batch-upload">
+        Загрузить CSV
+        <input type="file" accept=".csv,text/csv" hidden onChange={upload} />
+      </label>
+      {progress && (
+        <div className="p6 muted batch-progress">
+          {running ? "Проверяем" : "Проверено"} {progress.done} из {progress.total}
+          <div className="progress">
+            <span style={{ width: `${(progress.done / progress.total) * 100}%` }} />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BatchStatus({ item, selectedCode }) {
+  if (item.error) return <span className="status status-red">{item.error}</span>;
+  const { result } = item;
+  const code = selectedCode || result.code;
+  if (code) return <span className="status status-green">{code}</span>;
+  if (result.question) {
+    const label = result.question.char === CODE_QUESTION ? "Выбрать код" : `Уточнить: ${result.question.char}`;
+    return <span className="status status-blue">{label}</span>;
+  }
+  return <span className="status status-red">Код не найден</span>;
+}
+
+function BatchItem({ item, number, handlers }) {
+  const [open, setOpen] = useState(false);
+  const [selectedCode, setSelectedCode] = useState(null);
+  return (
+    <details className="batch-item" onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary>
+        <span className="p6 muted batch-number">{number}</span>
+        <span className="batch-text">{item.text}</span>
+        <BatchStatus item={item} selectedCode={selectedCode} />
+      </summary>
+      {open && item.result && (
+        <div className="batch-body">
+          <Result
+            text={item.text}
+            result={item.result}
+            animate={false}
+            selectedCode={selectedCode}
+            {...handlers(setSelectedCode)}
+          />
+        </div>
+      )}
+    </details>
+  );
+}
+
 function Footer() {
   return (
     <footer className="footer">
@@ -459,6 +564,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [response, setResponse] = useState(null);
   const [selectedCode, setSelectedCode] = useState(null);
+  const [batch, setBatch] = useState([]);
   const requestId = useRef(0);
   const liveTimer = useRef(null);
   const skipLive = useRef(null);
@@ -522,24 +628,29 @@ export default function App() {
     request(value, animate);
   };
 
-  const rewrite = (start, end, replacement) => {
-    const source = response.text;
-    const fragment = source.slice(start, end);
-    const value = replacement && !fragment.includes(":")
-      ? tidy(`${source.slice(0, start)}${source.slice(end)}, ${replacement}`)
-      : tidy(source.slice(0, start) + replacement + source.slice(end));
-    updateAndRequest(value);
-  };
-
-  const append = (part) => updateAndRequest(tidy(`${text.trim()}, ${part}`));
-  const answer = (name, option) => {
-    if (name === CODE_QUESTION) {
-      setSelectedCode(option);
-      return;
-    }
-    const found = response.result.chars.find((characteristic) => characteristic.name === name);
-    if (found) rewrite(found.start, found.end, `${name}: ${option}`);
-    else append(`${name}: ${option}`);
+  // Правка результата из файла переносит описание в форму сверху и подбирает заново там.
+  const editHandlers = (source, pickCode, moved = false) => {
+    const edit = (value) => {
+      updateAndRequest(value);
+      if (moved) window.scrollTo({ top: 0, behavior: "smooth" });
+    };
+    const rewrite = (start, end, replacement) => {
+      const fragment = source.text.slice(start, end);
+      edit(replacement && !fragment.includes(":")
+        ? tidy(`${source.text.slice(0, start)}${source.text.slice(end)}, ${replacement}`)
+        : tidy(source.text.slice(0, start) + replacement + source.text.slice(end)));
+    };
+    const append = (part) => edit(tidy(`${source.text}, ${part}`));
+    const answer = (name, option) => {
+      if (name === CODE_QUESTION) {
+        pickCode(option);
+        return;
+      }
+      const found = source.result.chars.find((characteristic) => characteristic.name === name);
+      if (found) rewrite(found.start, found.end, `${name}: ${option}`);
+      else append(`${name}: ${option}`);
+    };
+    return { onRewrite: rewrite, onAppend: append, onAnswer: answer };
   };
 
   return (
@@ -556,14 +667,26 @@ export default function App() {
           onExample={(example) => updateAndRequest(example, true)}
         />
         {serverError && <div className="notice notice-dark" role="alert">{serverError}</div>}
+        <BatchForm onItem={(item) => setBatch((items) => [...items, item])} onStart={() => setBatch([])} />
         {response && (
           <Result
             {...response}
             selectedCode={selectedCode}
-            onAnswer={answer}
-            onRewrite={rewrite}
-            onAppend={append}
+            {...editHandlers(response, setSelectedCode)}
           />
+        )}
+        {batch.length > 0 && (
+          <section className="card batch">
+            <h4>Результаты по файлу</h4>
+            {batch.map((item, index) => (
+              <BatchItem
+                item={item}
+                number={index + 1}
+                handlers={(pickCode) => editHandlers(item, pickCode, true)}
+                key={index}
+              />
+            ))}
+          </section>
         )}
       </main>
       <Footer />

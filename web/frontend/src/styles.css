@@ -175,3 +175,15 @@
 @media (max-width: 520px) {
   .auth .btn-red { display: none; }
 }
+
+.batch-upload { margin-top: 16px; display: inline-flex; align-items: center; cursor: pointer; }
+.batch-progress { margin-top: 16px; display: grid; gap: 6px; }
+.batch { display: grid; gap: 8px; }
+.batch h4 { margin-bottom: 8px; }
+.batch-item { border: 1px solid var(--gray-blue); }
+.batch-item summary { display: flex; align-items: center; gap: 16px; padding: 12px 16px; cursor: pointer; }
+.batch-item[open] summary { border-bottom: 1px solid var(--gray-blue); }
+.batch-number { flex: none; min-width: 24px; }
+.batch-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.batch-item summary .status { flex: none; }
+.batch-body { padding: 16px; background: var(--page-bg); }
