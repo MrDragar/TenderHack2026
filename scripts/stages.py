@@ -661,6 +661,6 @@ def report(ref: list[Position], portal: Portal, with_products: bool = True) -> s
 
 
 if __name__ == "__main__":
-    from pipeline.run import portal, reference
+    from pipeline.data import portal, reference
 
     print(report(reference(), portal(), with_products="--fast" not in sys.argv))

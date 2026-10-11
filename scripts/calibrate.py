@@ -19,8 +19,9 @@ from contracts.eval import ExpectedChar, GoldExample
 from contracts.pipeline import FoundChar
 from contracts.ref import Position
 from pipeline.candidates import find
+from pipeline.data import portal, reference
 from pipeline.link import link
-from pipeline.run import portal, reference, solve
+from pipeline.run import solve
 from pipeline.section import find_section
 from pipeline.values import same
 from scripts.generate import Generated, generate, section_texts, siblings

@@ -139,7 +139,7 @@ def save(found: list[Product]) -> None:
 
 
 if __name__ == "__main__":
-    from pipeline.run import portal
+    from pipeline.data import portal
 
     if not RAW_DIR.exists():
         sys.exit(f"Нет листа 1 в {RAW_DIR}")

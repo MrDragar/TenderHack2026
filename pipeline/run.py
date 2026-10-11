@@ -1,6 +1,5 @@
 import json
 import sys
-from functools import cache
 
 from contracts.pipeline import (
     Candidate,
@@ -17,6 +16,7 @@ from contracts.pipeline import (
 )
 from contracts.ref import Portal, Position
 from pipeline.candidates import find
+from pipeline.data import portal, reference
 from pipeline.explain import NAME_WHY, remarks
 from pipeline.extract import extract
 from pipeline.link import link
@@ -24,20 +24,6 @@ from pipeline.narrow import narrow
 from pipeline.section import find_section
 from pipeline.text import correct, stems, unknown, vocabulary, words
 from pipeline.trash import judge
-from scripts.dataloader import DEFAULT_PORTAL_PATH, load_data, load_portal
-
-
-@cache
-def reference() -> list[Position]:
-    return load_data()
-
-
-@cache
-def portal() -> Portal:
-    # Без собранного листа 2 работаем на одном КТРУ, а не падаем.
-    if not DEFAULT_PORTAL_PATH.exists():
-        return {}
-    return load_portal()
 
 
 def run(text: str) -> Result:

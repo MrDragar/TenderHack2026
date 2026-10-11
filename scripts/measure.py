@@ -17,8 +17,9 @@ from contracts.pipeline import (
     Run,
 )
 from contracts.ref import Portal, Position
+from pipeline.data import portal, reference
 from pipeline.link import link
-from pipeline.run import portal, reference, run, solve
+from pipeline.run import run, solve
 from pipeline.values import same, show
 from scripts.generate import gold_char, siblings
 from scripts.stages import Failure, Stage, compare

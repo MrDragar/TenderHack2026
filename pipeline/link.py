@@ -1,23 +1,65 @@
-from difflib import get_close_matches
+"""Значение характеристики это то, к которому кусок текста приводится самой дешёвой порчей.
+
+Зашумлённый канал (Brill и Moore 2000): цена значения это сумма по его словам самой дешёвой
+порчи (чисто, раскладка, форма слова, правка букв) плюс пропуск слов значения и выбор среди
+значений кандидатов. Цены порч это частоты на листах 2: написание базовой характеристики
+против значения связанной эталонной. Слово, которое значение не объясняет, стоит как шум
+из словаря поставщиков листа 1. Отрицание (NegEx, Chapman 2001) тоже порча: «без подсветки»
+дёшево объясняется «Наличие подсветки: Нет», окно и цены посчитаны по листу 1. Значение
+отдаём, только если P ≥ 1/2. Числа привязываются по словам перед числом и единице.
+"""
+
+import json
+import re
+import zlib
+from collections import Counter
+from collections.abc import Callable
+from difflib import SequenceMatcher
+from functools import cache
+from math import exp, inf, log
+from pathlib import Path
 from typing import Literal, TypedDict
 
-from contracts.pipeline import Candidate, FoundChar, Fragment, Rule
+from openpyxl import load_workbook
+
+from contracts.pipeline import Candidate, FixKind, FoundChar, Fragment, Rule
 from contracts.ref import Characteristic, Portal, PortalChar, Position, Unit, Value
 from pipeline.explain import mark
-from pipeline.text import Word, correct, stems, vocabulary, words
+from pipeline.text import Word, stem, stems, words
 from pipeline.values import UNIT_ALIASES, bounds, convert, same, scale, show, tidy
 
 # Перепутанная единица чаще всего сдвигает число на порядок: см вместо мм, м вместо см.
 SHIFTS = (10, 0.1, 100, 0.01, 1000, 0.001)
 SHOWN_OPTIONS = 6
+COSTS_PATH = Path("data/processed/link_noisy_channel_costs.json")
+# Написание базовой характеристики сравниваем с эталонным, только если это одно значение.
+SAME_VALUE = 0.5
+MAX_EDITS = 3
+RUSSIAN = "абвгдежзийклмнопрстуфхцчшщъыьэюя"
+ALPHABET = len(RUSSIAN) + 1
+OPS = ("sub", "del", "ins", "swap")
+NEGATION_PATH = Path("data/processed/link_negation_counts.json")
+# Грамматические слова отрицания, действуют вперёд (NegEx): «без подсветки», «не складной».
+TRIGGERS = {"без", "не", "нет", "отсутствует", "отсутствуют", "отсутствие"}
+MAX_SCOPE = 6
+# Знаки препинания обрывают действие отрицания, как конец фразы в NegEx.
+TOKEN = re.compile(r"\w+|[,;:.()]")
 
 type Source = Literal["ktru", "portal"]
 
 
-class Match(TypedDict):
-    char: FoundChar
-    value_words: int
-    name_words: int
+class Option(TypedDict):
+    char: Characteristic
+    value: str
+    source: Source
+
+
+class Explained(TypedDict):
+    option: Option
+    gain: float
+    used: set[int]
+    named: set[int]
+    kind: FixKind | None
 
 
 def link(
@@ -28,15 +70,16 @@ def link(
     portal: Portal,
 ) -> list[FoundChar]:
     by_code = {p["code"]: p for p in ref}
-    chars = []
-    for candidate in candidates:
-        chars.extend(by_code[candidate["code"]]["characteristics"])
+    positions = [by_code[candidate["code"]] for candidate in candidates]
+    chars = [char for position in positions for char in position["characteristics"]]
     allowed = allowed_values(chars)
     portal_chars = [as_ktru(char) for char in portal.get(section or "", [])]
     product = stems(" ".join(c["name"] for c in candidates))
+    prior = value_prior(positions)
 
-    pairs = told_pairs(fragments, chars, portal_chars, allowed, product)
-    values = told_values(fragments, chars, portal_chars, product)
+    pairs = told_pairs(fragments, chars, portal_chars, allowed, product, prior)
+    shared = set.intersection(*(stems(c["name"]) for c in candidates)) if candidates else set()
+    values = told_values(fragments, chars, portal_chars, product, shared, prior)
     numbers = number_values(fragments, chars, portal_chars, allowed, product)
     found = choose(pairs, values, numbers)
     # Обязательность у соседних кодов разная: обязательна, если обязательна хоть у одного.
@@ -47,68 +90,464 @@ def link(
 
 
 def choose(
-    pairs: list[FoundChar], values: list[Match], numbers: list[FoundChar]
+    pairs: list[FoundChar], values: list[FoundChar], numbers: list[FoundChar]
 ) -> list[FoundChar]:
-    """Единственное место, где решается, какое значение победит. Явная пара сильнее значения
-    без названия, оно сильнее числа. Внутри правила спор решается молча, между правилами
-    разные значения одной характеристики дают правку «два значения»."""
-    found = last_per_name(pairs) + best_per_name(best_per_span(values)) + numbers
-    return without_conflicts(found)
+    """Явная пара сильнее значения без названия, оно сильнее числа. Значения одного правила
+    уже выбраны каналом, между правилами разные значения дают правку «два значения»."""
+    by_name: dict[str, list[FoundChar]] = {}
+    for rule in (pairs, values, numbers):
+        mine: dict[str, list[FoundChar]] = {}
+        for char in rule:
+            mine.setdefault(char["name"], []).append(char)
+        for name, chars in mine.items():
+            kept = by_name.get(name)
+            if kept is None:
+                by_name[name] = chars
+                continue
+            other = [c for c in chars if not any(same(k["value"], c["value"]) for k in kept)]
+            if other:
+                mark(kept[0], "conflict", other=other[0]["fragment"])
+    return [char for chars in by_name.values() for char in chars]
 
 
-def last_per_name(found: list[FoundChar]) -> list[FoundChar]:
-    """Человек дописывает исправление в конец, поэтому из явных значений верно последнее."""
-    last = {}
-    for char in found:
-        last[char["name"]] = char
-    return list(last.values())
+@cache
+def costs() -> dict[str, float]:
+    """−log частоты каждой порчи. Счётчики собираются один раз по листам 2 в data/processed."""
+    if not COSTS_PATH.exists():
+        COSTS_PATH.write_text(json.dumps(mined_counts(), ensure_ascii=False, indent=1))
+    counts = json.loads(COSTS_PATH.read_text())
+    return priced(Counter(counts["words"]), Counter(counts["edits"]))
 
 
-def best_per_span(matches: list[Match]) -> list[Match]:
-    """Кусок текста одной характеристике: «ЛДСП» у столешницы, если она есть в тексте."""
-    by_span: dict[tuple[int, int], list[Match]] = {}
-    for match in matches:
-        span = (match["char"]["start"], match["char"]["end"])
-        by_span.setdefault(span, []).append(match)
-    return [max(group, key=strength) for group in by_span.values()]
+@cache
+def noise() -> float:
+    """Слово шума это порча «лишнее слово» и любое слово из тех, что поставщики пишут в товарах
+    листа 1, на выбор."""
+    # Лист 1 читаем здесь, а не при импорте: scripts.products тянет генератор, а он этот модуль.
+    from scripts.products import products
+
+    vocabulary = set()
+    for product in products({}, build=False):
+        vocabulary |= {word["text"] for word in words(product["name"])}
+        for name, value in product["pairs"]:
+            vocabulary |= {word["text"] for word in words(f"{name} {value}")}
+    return costs()["noise"] + log(len(vocabulary))
 
 
-def strength(match: Match) -> tuple[bool, int, int, bool, int]:
-    """КТРУ побеждает портал, затем полнота значения, слова названия в тексте, обязательная,
-    затем короче: из «Красный» и «3022 красная» верно первое."""
-    char = match["char"]
-    return (
-        char["source"] == "ktru",
-        match["value_words"],
-        match["name_words"],
-        char["required"],
-        -len(show(char["value"])),
-    )
+@cache
+def negation() -> dict[str, float]:
+    """Цены порчи «отрицание»: −log P(отрицание в тексте | ответ Да или Нет), −log P(ответ)
+    и окно, на котором отрицание чаще значит «Нет», чем «Да». Всё из листа 1: название товара
+    против его же пары «Наличие X: Да/Нет»."""
+    if not NEGATION_PATH.exists():
+        NEGATION_PATH.write_text(json.dumps(negation_counts(), indent=1))
+    counts = Counter(json.loads(NEGATION_PATH.read_text()))
+    window = 1
+    for distance in range(1, MAX_SCOPE + 1):
+        if counts[f"Нет:{distance}"] > counts[f"Да:{distance}"]:
+            window = distance
+    found = {"window": float(window)}
+    totals = {}
+    for answer in ("Да", "Нет"):
+        near = sum(counts[f"{answer}:{d}"] for d in range(1, window + 1))
+        total = near + counts[f"{answer}:0"]
+        found[f"{answer}:True"] = -log((near + 1) / (total + 2))
+        found[f"{answer}:False"] = -log((total - near + 1) / (total + 2))
+        totals[answer] = total
+    for answer, total in totals.items():
+        found[answer] = -log(total / sum(totals.values()))
+    return found
 
 
-def best_per_name(matches: list[Match]) -> list[FoundChar]:
-    """Из двух значений одной характеристики берём значение КТРУ, затем более полное."""
-    best: dict[str, Match] = {}
-    for match in matches:
-        kept = best.get(match["char"]["name"])
-        if kept is None or fuller(match) > fuller(kept):
-            best[match["char"]["name"]] = match
-    return [match["char"] for match in best.values()]
+def negation_counts() -> Counter[str]:
+    """«ответ:расстояние» от слова названия характеристики до слова отрицания перед ним,
+    0 если отрицания нет. Товары выборки замера пропускаем."""
+    from scripts.products import RAW_DIR, SAMPLE, SHEETS
+
+    counts: Counter[str] = Counter()
+    for sheet in SHEETS:
+        book = load_workbook(RAW_DIR / sheet, read_only=True)
+        for row in book.worksheets[0].iter_rows(min_row=2, max_col=6, values_only=True):
+            if not row[1] or not row[5] or zlib.crc32(str(row[0]).encode()) % SAMPLE == 0:
+                continue
+            tokens = TOKEN.findall(str(row[1]).lower())
+            for part in str(row[5]).split(" | "):
+                said = part.split()
+                if len(said) < 2 or said[-1].capitalize() not in ("Да", "Нет"):
+                    continue
+                distance = trigger_distance(tokens, stems(" ".join(said[:-1])) - stems("наличие"))
+                if distance is not None:
+                    counts[f"{said[-1].capitalize()}:{distance}"] += 1
+        book.close()
+    return counts
 
 
-def fuller(match: Match) -> tuple[bool, int]:
-    return match["char"]["source"] == "ktru", match["value_words"]
+def trigger_distance(tokens: list[str], name_stems: set[str]) -> int | None:
+    for i, token in enumerate(tokens):
+        if len(token) >= 3 and stem(token) in name_stems:
+            return scope_distance(tokens, i)
+    return None
 
 
-def without_conflicts(found: list[FoundChar]) -> list[FoundChar]:
-    kept: dict[str, FoundChar] = {}
-    for char in found:
-        first = kept.get(char["name"])
-        if first is None:
-            kept[char["name"]] = char
-        elif not same(first["value"], char["value"]):
-            mark(first, "conflict", other=char["fragment"])
-    return list(kept.values())
+def scope_distance(tokens: list[str], index: int) -> int:
+    """Сколько слов до ближайшего отрицания слева в пределах фразы, 0 если его нет."""
+    for back in range(1, MAX_SCOPE + 1):
+        if index - back < 0 or not tokens[index - back][0].isalnum():
+            return 0
+        if tokens[index - back] in TRIGGERS:
+            return back
+    return 0
+
+
+def negated_words(text: str, fragment_words: list[Word]) -> set[int]:
+    """Слова текста в окне действия отрицания."""
+    window = int(negation()["window"])
+    spans = [(m.start(), m[0].lower()) for m in TOKEN.finditer(text)]
+    tokens = [token for _, token in spans]
+    starts = [start for start, _ in spans]
+    found = set()
+    for i, word in enumerate(fragment_words):
+        if word["start"] in starts:
+            distance = scope_distance(tokens, starts.index(word["start"]))
+            if 0 < distance <= window:
+                found.add(i)
+    return found
+
+
+def says_negation(value: str) -> bool:
+    return value == "Нет" or bool(TRIGGERS & set(TOKEN.findall(value.lower())))
+
+
+def mined_counts() -> dict[str, Counter[str]]:
+    from scripts.products import RAW_DIR, SHEETS
+
+    written: Counter[tuple[str, tuple[str, ...]]] = Counter()
+    for sheet in SHEETS:
+        book = load_workbook(RAW_DIR / sheet, read_only=True)
+        for row in book.worksheets[1].iter_rows(min_row=2, max_col=11, values_only=True):
+            linked = tuple(linked_values(str(row[10] or "")))
+            if row[1] and row[6] and linked:
+                for value in split_values(str(row[6])):
+                    written[value, linked] += 1
+        book.close()
+    words_seen: Counter[str] = Counter()
+    edits: Counter[str] = Counter()
+    for (value, linked), times in written.items():
+        count_spoils(value, linked, times, words_seen, edits)
+    return {"words": words_seen, "edits": edits}
+
+
+def priced(words_seen: Counter[str], edits: Counter[str]) -> dict[str, float]:
+    """Цена вида порчи по словам, цена правки по виду и по букве: P(буква текста | буква КТРУ)
+    для замены и P(буква) для вставки, со сглаживанием на букву алфавита."""
+    said = sum(words_seen[k] for k in ("clean", "layout", "form", "edit", "noise"))
+    found = {}
+    for kind in ("clean", "layout", "form", "edit", "noise"):
+        found[kind] = -log((words_seen[kind] + 1) / said)
+    found["omit"] = -log((words_seen["omit"] + 1) / (words_seen["kept"] + words_seen["omit"]))
+    by_kind: Counter[str] = Counter()
+    by_letter: Counter[str] = Counter()
+    for op, count in edits.items():
+        kind, _, letters = op.partition(":")
+        by_kind[kind] += count
+        if kind == "sub":
+            by_letter["sub:" + letters[0]] += count
+    total = sum(by_kind[kind] for kind in OPS) + len(OPS)
+    for kind in OPS:
+        found[kind] = -log((by_kind[kind] + 1) / total)
+    for op, count in edits.items():
+        kind, _, letters = op.partition(":")
+        if kind == "sub":
+            found[op] = -log((count + 1) / (by_letter["sub:" + letters[0]] + ALPHABET))
+        elif kind == "ins":
+            found[op] = -log((count + 1) / (by_kind["ins"] + ALPHABET))
+        elif kind == "form":
+            found[op] = 0.0
+    for letter in RUSSIAN:
+        found.setdefault("sub:" + letter, -log(1 / (by_letter["sub:" + letter] + ALPHABET)))
+    found["ins:"] = -log(1 / (by_kind["ins"] + ALPHABET))
+    return found
+
+
+def op_price(op: str) -> float:
+    price = costs()
+    kind, _, letters = op.partition(":")
+    if kind == "sub":
+        letter = price.get(op, price.get("sub:" + letters[0], price["ins:"]))
+        return price[kind] + letter
+    if kind == "ins":
+        return price[kind] + price.get(op, price["ins:"])
+    return price[kind]
+
+
+def split_values(cell: str) -> list[str]:
+    return [part.strip() for part in cell.split(";") if part.strip()]
+
+
+def linked_values(cell: str) -> list[str]:
+    """«5517160: М0; М1 | 5517205: М0; М1» → значения эталонных характеристик."""
+    found = []
+    for part in cell.split(" | "):
+        found += split_values(part.split(":", 1)[-1])
+    return found
+
+
+def count_spoils(
+    value: str, linked: tuple[str, ...], times: int, words_seen: Counter, edits: Counter
+) -> None:
+    folded = value.casefold()
+    best = max(linked, key=lambda v: SequenceMatcher(None, folded, v.casefold()).ratio())
+    if SequenceMatcher(None, folded, best.casefold()).ratio() < SAME_VALUE:
+        return
+    meant = [word["text"] for word in words(best)]
+    hit = set()
+    for word in words(value):
+        kind, ops, index = None, [], -1
+        for i, target in enumerate(meant):
+            found, found_ops = spoil_kind(word, target)
+            if found and (kind is None or RANK[found] < RANK[kind]):
+                kind, ops, index = found, found_ops, i
+        words_seen[kind or "noise"] += times
+        for op in ops:
+            edits[op] += times
+        hit.add(index)
+    kept = len(hit - {-1})
+    words_seen["kept"] += kept * times
+    words_seen["omit"] += (len(meant) - kept) * times
+
+
+RANK = {"clean": 0, "layout": 1, "form": 2, "edit": 3}
+
+
+def spoil_kind(word: Word, target: str) -> tuple[str | None, list[str]]:
+    """Правки формы слова считаем как пару окончаний «ый>ая», правки строки по видам."""
+    if word["text"] == target:
+        return ("layout" if word["fix"] else "clean"), []
+    if word["stem"] == stem(target):
+        return "form", ["form:" + tails(word["text"], target)]
+    distance, ops = edit(word["text"], target, unit)
+    if distance <= 2 and len(target) >= 4:
+        return "edit", ops
+    return None, []
+
+
+def tails(said: str, meant: str) -> str:
+    common = 0
+    while common < min(len(said), len(meant)) and said[common] == meant[common]:
+        common += 1
+    return f"{meant[common:]}>{said[common:]}"
+
+
+def unit(_: str) -> float:
+    return 1.0
+
+
+def edit(said: str, meant: str, price: Callable[[str], float]) -> tuple[float, list[str]]:
+    """Цена правок, которыми meant превращается в said: замена, пропуск, вставка, перестановка
+    соседних букв (Дамерау). Возвращает и сами правки, по ним считаются частоты."""
+    if abs(len(said) - len(meant)) > MAX_EDITS:
+        return inf, []
+    rows, cols = len(meant) + 1, len(said) + 1
+    table: list[list[tuple[float, tuple[str, ...]]]] = [[(0.0, ())] * cols for _ in range(rows)]
+    for i in range(1, rows):
+        table[i][0] = step(table[i - 1][0], f"del:{meant[i - 1]}", price)
+    for j in range(1, cols):
+        table[0][j] = step(table[0][j - 1], f"ins:{said[j - 1]}", price)
+    for i in range(1, rows):
+        for j in range(1, cols):
+            steps = [
+                step(table[i - 1][j], f"del:{meant[i - 1]}", price),
+                step(table[i][j - 1], f"ins:{said[j - 1]}", price),
+            ]
+            if meant[i - 1] == said[j - 1]:
+                steps.append(table[i - 1][j - 1])
+            else:
+                steps.append(step(table[i - 1][j - 1], f"sub:{meant[i - 1]}{said[j - 1]}", price))
+            if i > 1 and j > 1 and meant[i - 1] == said[j - 2] and meant[i - 2] == said[j - 1]:
+                steps.append(step(table[i - 2][j - 2], "swap", price))
+            table[i][j] = min(steps, key=lambda found: found[0])
+    cost, ops = table[-1][-1]
+    return cost, list(ops)
+
+
+def step(
+    before: tuple[float, tuple[str, ...]], op: str, price: Callable[[str], float]
+) -> tuple[float, tuple[str, ...]]:
+    return before[0] + price(op), (*before[1], op)
+
+
+@cache
+def word_cost(said: str, layout: bool, meant: str) -> tuple[float, FixKind | None]:
+    """Самая дешёвая порча, которой слово КТРУ meant стало словом текста said."""
+    price = costs()
+    ways: list[tuple[float, FixKind | None]] = [
+        (price["edit"] + edit(said, meant, op_price)[0], "typo"),
+        (price["form"] + price["edit"] + edit(stem(said), stem(meant), op_price)[0], "typo"),
+    ]
+    if said == meant:
+        ways.append((price["clean"], None))
+    if stem(said) == stem(meant) and "form:" + tails(said, meant) in price:
+        ways.append((price["form"], None))
+    cost, kind = min(ways, key=lambda way: way[0])
+    if layout:
+        return cost + price["layout"] - price["clean"], "layout"
+    return cost, kind
+
+
+def value_prior(positions: list[Position]) -> dict[tuple[str, str], float]:
+    """−log доли кандидатов, у которых есть это значение, среди тех, у кого есть характеристика."""
+    having: Counter[str] = Counter()
+    valued: Counter[tuple[str, str]] = Counter()
+    for position in positions:
+        for char in position["characteristics"]:
+            having[char["name"]] += 1
+            for value in {v for v in char["values"] if isinstance(v, str)}:
+                valued[char["name"], value] += 1
+    return {key: -log(count / having[key[0]]) for key, count in valued.items()}
+
+
+def explain(
+    fragment_words: list[Word],
+    options: list[Option],
+    prior: dict[tuple[str, str], float],
+    product: set[str],
+    negated: set[int],
+) -> list[Explained]:
+    """Жадно объясняем текст: значение с наибольшим выигрышем над шумом забирает свои слова
+    и слова названия своей характеристики, остальные пересчитываются на оставшихся. Слова,
+    общие для названий всех кандидатов, уже объяснены товаром. Если соперник за те же слова
+    почти так же вероятен (P лучшего < 1/2), слова забираем, а ответа не даём."""
+    taken = {i for i, word in enumerate(fragment_words) if word["stem"] in product}
+    values: set[int] = set()
+    found = []
+    while True:
+        scored = []
+        for option in options:
+            match = score(fragment_words, option, taken, values, prior, log(len(options)), negated)
+            if match:
+                scored.append(match)
+        if not scored:
+            return found
+        best = max(scored, key=lambda s: s["gain"])
+        rivals = [s for s in scored if s is not best and s["used"] & best["used"]]
+        odds = exp(-best["gain"]) + sum(exp(s["gain"] - best["gain"]) for s in rivals)
+        taken |= best["used"] | best["named"]
+        values |= best["used"]
+        if 1 / (1 + odds) >= 0.5:
+            found.append(best)
+
+
+def score(
+    fragment_words: list[Word],
+    option: Option,
+    taken: set[int],
+    values: set[int],
+    prior: dict[tuple[str, str], float],
+    choice: float,
+    negated: set[int],
+) -> Explained | None:
+    """Выигрыш значения над шумом: −log P(z | шум) − (−log P(z | a) − log P(a)), где P(a)
+    это выбор одного из значений кандидатов и доля кандидатов с этим значением."""
+    price = costs()
+    meant = [word["text"] for word in words(searched_text(option["char"], option["value"]))]
+    if not meant:
+        return None
+    gain = -choice - prior.get((option["char"]["name"], option["value"]), 0.0)
+    used: set[int] = set()
+    kinds = []
+    for target in meant:
+        place, cost, kind = closest(fragment_words, target, taken | used)
+        if place is None:
+            gain -= price["omit"]
+            continue
+        used.add(place)
+        gain += noise() - cost
+        kinds.append(kind)
+    if not used:
+        return None
+    gain -= negation_cost(option["value"], bool(used & negated))
+    named: set[int] = set()
+    if option["value"] not in ("Да", "Нет"):
+        for target in {word["text"] for word in words(option["char"]["name"])}:
+            place, cost, _ = closest(fragment_words, target, values | used | named)
+            if place is not None:
+                named.add(place)
+                gain += noise() - cost
+        if option["source"] == "portal" and not named:
+            return None
+    if gain <= 0:
+        return None
+    kind = "layout" if "layout" in kinds else "typo" if "typo" in kinds else None
+    return {"option": option, "gain": gain, "used": used, "named": named, "kind": kind}
+
+
+def negation_cost(value: str, negated: bool) -> float:
+    """Отрицание в тексте и в значении должны совпасть: «без подсветки» дёшево объясняется
+    «Нет», дорого «Да». У Да и Нет ещё своя доля в листе 1."""
+    price = negation()
+    answer = "Нет" if says_negation(value) else "Да"
+    cost = price[f"{answer}:{negated}"]
+    if value in ("Да", "Нет"):
+        cost += price[value]
+    return cost
+
+
+def closest(
+    fragment_words: list[Word], target: str, busy: set[int]
+) -> tuple[int | None, float, FixKind | None]:
+    """Слово текста, которое дешевле шума объясняется словом target."""
+    best: tuple[int | None, float, FixKind | None] = (None, noise(), None)
+    for i, word in enumerate(fragment_words):
+        if i in busy:
+            continue
+        cost, kind = word_cost(word["text"], word["fix"] == "layout", target)
+        if cost < best[1]:
+            best = (i, cost, kind)
+    return best
+
+
+def options_of(chars: list[Characteristic], source: Source) -> list[Option]:
+    seen = set()
+    found: list[Option] = []
+    for char in chars:
+        for value in char["values"]:
+            if isinstance(value, str) and (char["name"], value) not in seen:
+                if value == "Нет" and not all(v in ("Да", "Нет") for v in char["values"]):
+                    continue
+                seen.add((char["name"], value))
+                found.append({"char": char, "value": value, "source": source})
+    return found
+
+
+def chosen(
+    explained: list[Explained],
+    item: Fragment,
+    fragment_words: list[Word],
+    rule: Rule,
+    multiple: set[str],
+) -> list[FoundChar]:
+    """Одно значение на характеристику, несколько только там, где КТРУ разрешает выбор."""
+    found: list[FoundChar] = []
+    for match in explained:
+        option = match["option"]
+        name = option["char"]["name"]
+        if any(f["name"] == name for f in found) and name not in multiple:
+            continue
+        start = min(fragment_words[i]["start"] for i in match["used"])
+        end = max(fragment_words[i]["end"] for i in match["used"])
+        char = found_char(
+            option["char"],
+            option["value"],
+            option["source"],
+            rule,
+            item["text"][start:end],
+            item["start"] + start,
+            item["start"] + end,
+        )
+        if match["kind"]:
+            mark(char, match["kind"])
+        found.append(char)
+    return found
 
 
 def found_char(
@@ -161,32 +600,39 @@ def allowed_values(chars: list[Characteristic]) -> dict[str, list[Value]]:
     return allowed
 
 
+def multiple_names(chars: list[Characteristic]) -> set[str]:
+    return {char["name"] for char in chars if char["selection"] == "multiple"}
+
+
 def told_pairs(
     fragments: list[Fragment],
     chars: list[Characteristic],
     portal_chars: list[Characteristic],
     allowed: dict[str, list[Value]],
     product: set[str],
+    prior: dict[tuple[str, str], float],
 ) -> list[FoundChar]:
-    found = []
+    """Человек дописывает исправление в конец, поэтому из явных значений верны последние."""
+    last: dict[str, list[FoundChar]] = {}
     for item in fragments:
         if item["form"] == "pair":
-            char = pair_char(item, chars, portal_chars, allowed, product)
-            if char:
-                found.append(char)
-    return found
+            found = pair_chars(item, chars, portal_chars, allowed, product, prior)
+            if found:
+                last[found[0]["name"]] = found
+    return [char for found in last.values() for char in found]
 
 
-def pair_char(
+def pair_chars(
     item: Fragment,
     chars: list[Characteristic],
     portal_chars: list[Characteristic],
     allowed: dict[str, list[Value]],
     product: set[str],
-) -> FoundChar | None:
+    prior: dict[tuple[str, str], float],
+) -> list[FoundChar]:
     offset = name_offset(item["name"] or "", product)
     if offset is None:
-        return None
+        return []
     name = (item["name"] or "")[offset:]
     start = item["start"] + offset
     fragment = item["text"][offset:]
@@ -196,15 +642,18 @@ def pair_char(
         char = named(portal_chars, name)
         source = "portal"
     if char is None:
-        return new_char(name, item["value"], fragment, start, item["end"])
+        return [new_char(name, item["value"], fragment, start, item["end"])]
     values = allowed.get(char["name"], []) if source == "ktru" else char["values"]
     if char["type"] == "number":
         if item["number"] is None:
-            return None
-        found = number_char(char, source, "pair", item["number"], item["unit"], values, fragment)
+            return []
+        found = [number_char(char, source, "pair", item["number"], item["unit"], values, fragment)]
     else:
-        found = text_pair(char, source, item["value"], fragment, values)
-    found["start"], found["end"] = start, item["end"]
+        whole = char.copy()
+        whole["values"] = values
+        found = text_pair(whole, source, item["value"], fragment, prior, multiple_names(chars))
+    for char_found in found:
+        char_found["start"], char_found["end"] = start, item["end"]
     return found
 
 
@@ -245,24 +694,43 @@ def new_char(name: str, raw: str, fragment: str, start: int, end: int) -> FoundC
 
 
 def text_pair(
-    char: Characteristic, source: Source, raw: str, fragment: str, values: list[Value]
-) -> FoundChar:
-    """Значение из списка, ближайшее при опечатке, иначе как есть. Списки портала собраны
-    из того, что вводили поставщики, поэтому «нет в списке» говорим только про КТРУ."""
-    options = {v.casefold(): v for v in values if isinstance(v, str)}
-    item = found_char(char, raw, source, "pair", fragment)
+    char: Characteristic,
+    source: Source,
+    raw: str,
+    fragment: str,
+    prior: dict[tuple[str, str], float],
+    multiple: set[str],
+) -> list[FoundChar]:
+    """Значение пары это те значения списка, к которым текст приводится дешевле шума. Списки
+    портала собраны из того, что вводили поставщики, поэтому «нет в списке» только про КТРУ."""
+    options = {v.casefold(): v for v in char["values"] if isinstance(v, str)}
     if raw.casefold() in options:
-        item["value"] = options[raw.casefold()]
-        return item
-    close = get_close_matches(raw.casefold(), options, n=1, cutoff=0.75)
-    if close:
-        item["value"] = options[close[0]]
-        mark(item, "typo")
-        return item
+        return [found_char(char, options[raw.casefold()], source, "pair", fragment)]
+    item: Fragment = {
+        "form": "words",
+        "name": None,
+        "value": raw,
+        "text": raw,
+        "number": None,
+        "unit": None,
+        "start": 0,
+        "end": len(raw),
+    }
+    raw_words = words(raw)
+    pair_options = [o for o in options_of([char], source) if o["value"] not in ("Да", "Нет")]
+    negated = negated_words(raw, raw_words)
+    found = chosen(
+        explain(raw_words, pair_options, prior, set(), negated), item, raw_words, "pair", multiple
+    )
+    if found:
+        for char_found in found:
+            char_found["fragment"] = fragment
+        return found
+    left = found_char(char, raw, source, "pair", fragment)
     if source == "ktru":
         shown = ", ".join(sorted(set(options.values()))[:SHOWN_OPTIONS])
-        mark(item, "not_in_list", options=shown)
-    return item
+        mark(left, "not_in_list", options=shown)
+    return [left]
 
 
 def told_values(
@@ -270,63 +738,38 @@ def told_values(
     chars: list[Characteristic],
     portal_chars: list[Characteristic],
     product: set[str],
-) -> list[Match]:
-    """Значения без названия: «деревянный» → Тип каркаса: Деревянный."""
-    texts = []
-    for char in chars + portal_chars:
-        for value in char["values"]:
-            if isinstance(value, str):
-                texts.append(searched_text(char, value))
-    vocab = vocabulary(texts)
-
-    matches = []
+    shared: set[str],
+    prior: dict[tuple[str, str], float],
+) -> list[FoundChar]:
+    """Значения без названия: «деревянный» → Тип каркаса: Деревянный. Значение портала берём,
+    только если рядом названа и сама характеристика: в списках портала много мусора."""
+    ktru = options_of(chars, "ktru")
+    portal = options_of(portal_chars, "portal")
+    multiple = multiple_names(chars)
+    found = []
     for item in fragments:
         if item["form"] == "words":
-            fragment_words = correct(words(item["text"]), vocab)
-            matches += find_matches(item, fragment_words, chars, "ktru")
+            fragment_words = words(item["text"])
+            negated = negated_words(item["text"], fragment_words)
+            found += chosen(
+                explain(fragment_words, ktru, prior, shared, negated),
+                item,
+                fragment_words,
+                "value",
+                multiple,
+            )
             # Слова товара не подсказывают характеристику портала: «Вид стола: Письменный».
             told = [word for word in fragment_words if word["stem"] not in product]
-            matches += find_matches(item, told, portal_chars, "portal")
-    return matches
-
-
-def find_matches(
-    item: Fragment, fragment_words: list[Word], chars: list[Characteristic], source: Source
-) -> list[Match]:
-    """Все значения, каждое слово которых есть в куске, без выбора. Значение портала берём,
-    только если рядом названа и сама характеристика: в списках портала много мусора."""
-    text_stems = {word["stem"] for word in fragment_words}
-    matches: list[Match] = []
-    for char in chars:
-        name_words = len(stems(char["name"]) & text_stems)
-        if source == "portal" and not name_words:
-            continue
-        for value in char["values"]:
-            if not isinstance(value, str) or value == "Нет":
-                continue
-            wanted = stems(searched_text(char, value))
-            # «Размер: Размер 9, l» совпадает с текстом одним названием, это не значение.
-            if source == "portal" and value != "Да" and wanted <= stems(char["name"]):
-                continue
-            hits = [word for word in fragment_words if word["stem"] in wanted]
-            if not wanted or {word["stem"] for word in hits} != wanted:
-                continue
-            start = min(word["start"] for word in hits)
-            end = max(word["end"] for word in hits)
-            fragment = item["text"][start:end]
-            found = found_char(
-                char, value, source, "value", fragment, item["start"] + start, item["start"] + end
+            told_negated = negated_words(item["text"], told)
+            found += chosen(
+                explain(told, portal, prior, shared, told_negated), item, told, "value", multiple
             )
-            fixes = [word["fix"] for word in hits if word["fix"]]
-            if fixes:
-                mark(found, fixes[0])
-            matches.append({"char": found, "value_words": len(wanted), "name_words": name_words})
-    return matches
+    return found
 
 
 def searched_text(char: Characteristic, value: str) -> str:
     """«Да» ищем по названию: «из натуральной кожи» значит «Натуральная кожа: Да»."""
-    if value == "Да":
+    if value in ("Да", "Нет"):
         return char["name"]
     return value
 

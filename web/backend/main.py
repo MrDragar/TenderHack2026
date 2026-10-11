@@ -6,7 +6,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from pipeline.run import reference, run
+from pipeline.data import reference
+from pipeline.run import run
 
 MAX_TEXT = 1000
 
