@@ -7,6 +7,7 @@ requires-python = ">=3.14"
 dependencies = [
     "fastapi>=0.115.12,<0.116",
     "openpyxl>=3.1.5",
+    "pymorphy3>=2.0.6",
     "scikit-learn>=1.9.1",
     "uvicorn>=0.34.2,<0.35",
 ]
