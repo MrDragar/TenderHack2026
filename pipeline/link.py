@@ -24,6 +24,7 @@ from openpyxl import load_workbook
 
 from contracts.pipeline import Candidate, FixKind, FoundChar, Fragment, Rule
 from contracts.ref import Characteristic, Portal, PortalChar, Position, Unit, Value
+from pipeline.data import reference
 from pipeline.explain import mark
 from pipeline.text import Word, stem, stems, words
 from pipeline.values import UNIT_ALIASES, bounds, convert, same, scale, show, tidy
@@ -44,6 +45,8 @@ TRIGGERS = {"без", "не", "нет", "отсутствует", "отсутс�
 MAX_SCOPE = 6
 # Знаки препинания обрывают действие отрицания, как конец фразы в NegEx.
 TOKEN = re.compile(r"\w+|[,;:.()]")
+
+UNIT_IN_NAME = re.compile(r"[(,]\s*(?P<unit>[^(),]+?)\)?$")
 
 type Source = Literal["ktru", "portal"]
 
@@ -265,6 +268,10 @@ def priced(words_seen: Counter[str], edits: Counter[str]) -> dict[str, float]:
             found[op] = -log((count + 1) / (by_kind["ins"] + ALPHABET))
         elif kind == "form":
             found[op] = 0.0
+    # Пара окончаний, которой не было в листах 2, это всё ещё форма слова, а не опечатка:
+    # её доля это доля впервые встреченных пар (Witten и Bell 1991).
+    forms = [count for op, count in edits.items() if op.startswith("form:")]
+    found["form:"] = -log(len(forms) / (sum(forms) + len(forms)))
     for letter in RUSSIAN:
         found.setdefault("sub:" + letter, -log(1 / (by_letter["sub:" + letter] + ALPHABET)))
     found["ins:"] = -log(1 / (by_kind["ins"] + ALPHABET))
@@ -333,6 +340,13 @@ def spoil_kind(word: Word, target: str) -> tuple[str | None, list[str]]:
     return None, []
 
 
+def same_word(said: str, meant: str) -> bool:
+    """Падеж и род меняют до трёх последних букв: «чехлом» и «чехла», «стальной» и «сталь».
+    Обрезка до шести букв в stem их разводит."""
+    root = len(meant) - len(tails(said, meant).split(">")[0])
+    return root >= 4 and len(meant) - root <= 3 and len(said) - root <= 3
+
+
 def tails(said: str, meant: str) -> str:
     common = 0
     while common < min(len(said), len(meant)) and said[common] == meant[common]:
@@ -388,8 +402,8 @@ def word_cost(said: str, layout: bool, meant: str) -> tuple[float, FixKind | Non
     ]
     if said == meant:
         ways.append((price["clean"], None))
-    if stem(said) == stem(meant) and "form:" + tails(said, meant) in price:
-        ways.append((price["form"], None))
+    if same_word(said, meant):
+        ways.append((price["form"] + price.get("form:" + tails(said, meant), price["form:"]), None))
     cost, kind = min(ways, key=lambda way: way[0])
     if layout:
         return cost + price["layout"] - price["clean"], "layout"
@@ -770,10 +784,24 @@ def told_values(
 
 
 def searched_text(char: Characteristic, value: str) -> str:
-    """«Да» ищем по названию: «из натуральной кожи» значит «Натуральная кожа: Да»."""
+    """«Да» ищем по названию: «из натуральной кожи» значит «Натуральная кожа: Да». Слова
+    шаблона названий вроде «Наличие» люди не пишут, их пропуск не штрафуем."""
     if value in ("Да", "Нет"):
-        return char["name"]
+        return " ".join(w["text"] for w in words(char["name"]) if w["text"] not in template())
     return value
+
+
+@cache
+def template() -> set[str]:
+    """Слова, которые стоят больше чем в половине названий характеристик «Да/Нет» КТРУ."""
+    names = {
+        char["name"]
+        for position in reference()
+        for char in position["characteristics"]
+        if char["values"] and all(v in ("Да", "Нет") for v in char["values"])
+    }
+    seen = Counter(text for name in names for text in {w["text"] for w in words(name)})
+    return {text for text, count in seen.items() if count > len(names) / 2}
 
 
 def number_values(
@@ -794,6 +822,11 @@ def number_values(
         char = owner(numeric, item["unit"], name_stems, guess=True)
         source: Source = "ktru"
         if char is None:
+            listed = listed_number(chars, item, name_stems)
+            if listed:
+                found.append(listed)
+                continue
+        if char is None:
             # В названиях портала много мусора, поэтому название должно быть в тексте целиком.
             told = name_stems - product
             named_here = [c for c in portal_numeric if stems(c["name"]) <= told]
@@ -810,12 +843,35 @@ def number_values(
     return found
 
 
+def listed_number(
+    chars: list[Characteristic], item: Fragment, name_stems: set[str]
+) -> FoundChar | None:
+    """«размер 48» → Российский размер: 48. В КТРУ размер это текст, но значение в списке."""
+    said = show(tidy(item["number"] or 0))
+    for char in chars:
+        if char["type"] == "text" and said in char["values"] and stems(char["name"]) & name_stems:
+            char_found = found_char(char, said, "ktru", "number", item["text"])
+            char_found["start"], char_found["end"] = item["start"], item["end"]
+            return char_found
+    return None
+
+
 def numeric_chars(chars: list[Characteristic]) -> list[Characteristic]:
     numeric = {}
     for char in chars:
-        if char["type"] == "number" and "unit" in char:
-            numeric[char["name"]] = char
+        if char["type"] == "number":
+            numeric[char["name"]] = char if "unit" in char else named_unit(char)
     return list(numeric.values())
+
+
+def named_unit(char: Characteristic) -> Characteristic:
+    """В КТРУ единица бывает только в названии: «Максимальный крутящий момент (Нм)»."""
+    found = UNIT_IN_NAME.search(char["name"])
+    if found is None or found["unit"].lower() not in UNIT_ALIASES:
+        return char
+    with_unit = char.copy()
+    with_unit["unit"] = {"code": UNIT_ALIASES[found["unit"].lower()], "name": found["unit"]}
+    return with_unit
 
 
 def number_char(
@@ -866,7 +922,9 @@ def owner(
     best_hits = 0
     same_dimension = 0
     for char in chars:
-        if code is not None and scale(char["unit"]["code"])[0] != scale(code)[0]:
+        if code is not None and (
+            "unit" not in char or scale(char["unit"]["code"])[0] != scale(code)[0]
+        ):
             continue
         same_dimension += 1
         hits = len(stems(char["name"]) & name_stems)

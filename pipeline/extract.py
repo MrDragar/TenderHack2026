@@ -5,11 +5,16 @@ from contracts.pipeline import Fragment
 from pipeline.text import PAIR, words
 from pipeline.values import UNIT_ALIASES
 
+UNIT = "|".join(sorted(map(re.escape, UNIT_ALIASES), key=len, reverse=True))
+# Цифры, приклеенные к буквам, это модель или артикул: «DF032DWME», «ДУ-20880Т», «X11».
 NUMBER = re.compile(
-    r"(?P<number>\d+(?:[.,]\d+)?)(?:\s*(?P<unit>"
-    + "|".join(sorted(UNIT_ALIASES, key=len, reverse=True))
-    + r")\b)?",
+    r"(?<!\w)(?P<number>\d+(?:[.,]\d+)?)(?:\s*(?P<unit>" + UNIT + r")(?!\w))?(?!\w)",
     re.IGNORECASE,
+)
+SIDE = r"(\d+(?:[.,]\d+)?)"
+BY = r"\s*(?:[хx×*]|на)\s*"
+SIZE = re.compile(
+    SIDE + BY + SIDE + rf"(?:{BY}{SIDE})?(?:\s*(?P<unit>{UNIT})(?!\w))?", re.IGNORECASE
 )
 TENS = {
     "десять": 10,
@@ -68,14 +73,40 @@ def numbers(text: str, start: int, end: int) -> list[Fragment]:
         item = fragment("number", None, text, start + match.start(), start + match.end())
         item["number"], item["unit"] = 1 + TENS[match["tens"].lower()] / 100, "006"
         found.append(item)
+    for match in SIZE.finditer(clause):
+        found += sides(text, start, match)
+        spoken.append((match.start(), match.end()))
     for match in NUMBER.finditer(clause):
         if not any(s <= match.start() < e for s, e in spoken):
             item = fragment("number", None, text, start + match.start(), start + match.end())
             item["number"], item["unit"] = number_of(match), unit_code(match)
             found.append(item)
     for item in found:
-        item["name"] = text[start : item["start"]].strip() or None
+        if item["name"] is None:
+            # «4 полки», «2 выдвижных ящика»: название после числа, если перед ним ничего нет.
+            before = text[start : item["start"]].strip()
+            item["name"] = before or text[item["end"] : end].strip() or None
     return found
+
+
+def sides(text: str, start: int, match: re.Match[str]) -> list[Fragment]:
+    """«1200х800 мм», «90 на 200»: длина это большая сторона, ширина меньшая, третья высота.
+    Порядок записи у людей разный, а длина по определению наибольший размер."""
+    groups = [group for group in (1, 2, 3) if match[group] is not None]
+    long = number_of_text(match[1]) >= number_of_text(match[2])
+    names = ["длина", "ширина"] if long else ["ширина", "длина"]
+    before = text[start : start + match.start()].strip()
+    found = []
+    for group, name in zip(groups, [*names, "высота"], strict=False):
+        item = fragment("number", None, text, start + match.start(group), start + match.end(group))
+        item["name"] = f"{before} {name}".strip()
+        item["number"], item["unit"] = number_of_text(match[group]), unit_code(match)
+        found.append(item)
+    return found
+
+
+def number_of_text(number: str) -> float:
+    return float(number.replace(",", "."))
 
 
 def fragment(
@@ -100,7 +131,7 @@ def stripped(text: str, start: int, end: int) -> tuple[int, int]:
 
 
 def number_of(match: re.Match[str]) -> float:
-    return float(match["number"].replace(",", "."))
+    return number_of_text(match["number"])
 
 
 def unit_code(match: re.Match[str]) -> str | None:

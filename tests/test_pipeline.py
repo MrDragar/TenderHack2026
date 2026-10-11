@@ -263,6 +263,28 @@ def test_extract_forms_without_reference():
     assert fragments[5]["value"] == "белый"
 
 
+def test_extract_sizes_long_side_is_length():
+    numbers = [
+        f for f in extract("Матрас 90 на 200, стол 1200х800х750 мм") if f["form"] == "number"
+    ]
+
+    assert [(f["name"], f["number"], f["unit"]) for f in numbers] == [
+        ("Матрас ширина", 90, None),
+        ("Матрас длина", 200, None),
+        ("стол длина", 1200, "003"),
+        ("стол ширина", 800, "003"),
+        ("стол высота", 750, "003"),
+    ]
+
+
+def test_extract_skips_model_numbers_and_names_count_after_number():
+    numbers = [
+        f for f in extract("Шуруповерт DF032DWME, ДУ-20880Т, 4 полки") if f["form"] == "number"
+    ]
+
+    assert [(f["name"], f["number"]) for f in numbers] == [("полки", 4)]
+
+
 def test_extract_empty_text():
     assert extract("") == []
     assert extract(" , ;") == []
