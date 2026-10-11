@@ -307,3 +307,16 @@ def test_told_portal_char_keeps_free_value():
 
     char = result["chars"][0]
     assert (char["source"], char["value"], char["kind"]) == ("portal", "венге", None)
+
+
+def test_noise_without_products(monkeypatch):
+    import pipeline.link
+    import scripts.products
+
+    monkeypatch.setattr(scripts.products, "products", lambda portal: [])
+    monkeypatch.setattr(pipeline.link, "costs", lambda: {"noise": 2.0})
+    pipeline.link.noise.cache_clear()
+    try:
+        assert pipeline.link.noise() == 2.0
+    finally:
+        pipeline.link.noise.cache_clear()

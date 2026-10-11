@@ -124,14 +124,16 @@ def noise() -> float:
     """Слово шума это порча «лишнее слово» и любое слово из тех, что поставщики пишут в товарах
     листа 1, на выбор."""
     # Лист 1 читаем здесь, а не при импорте: scripts.products тянет генератор, а он этот модуль.
+    from pipeline.data import portal
     from scripts.products import products
 
     vocabulary = set()
-    for product in products({}, build=False):
+    for product in products(portal()):
         vocabulary |= {word["text"] for word in words(product["name"])}
         for name, value in product["pairs"]:
             vocabulary |= {word["text"] for word in words(f"{name} {value}")}
-    return costs()["noise"] + log(len(vocabulary))
+    # Без листа 1 выборку не собрать, считаем словарь из одного слова, а не падаем.
+    return costs()["noise"] + log(max(len(vocabulary), 1))
 
 
 @cache
