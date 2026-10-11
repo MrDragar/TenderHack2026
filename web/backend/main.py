@@ -8,7 +8,6 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from pipeline.data import reference
 from pipeline.run import run
 
 MAX_TEXT = 1000
@@ -22,7 +21,8 @@ class RunRequest(BaseModel):
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    reference()
+    # Кэши конвейера собираются из xlsx минутами: до первого запроса, а не под таймаутом nginx.
+    run("стул")
     yield
 
 
