@@ -46,23 +46,35 @@ def test_duplicate_keys_pair_in_order():
     assert [(p["base"], p["variant"]) for p in found] == [("верно", "верно"), ("неверно", "верно")]
 
 
-def test_extra_on_one_side_means_other_side_was_right():
-    extra: Item = item("стол | лишнее Цвет", "ничего", "Цвет: красный", "неверно")
+def test_extra_on_one_side_means_other_side_gave_none():
+    extra: Item = item("стол | лишнее Цвет", "ничего", "Цвет: красный", "лишнее")
 
     found = pairs([extra], [])
 
     assert (found[0]["base"], found[0]["variant"], found[0]["variant_got"]) == (
-        "неверно",
-        "верно",
+        "лишнее",
+        "нет",
         "ничего",
     )
     assert pairs([], []) == []
+
+
+def test_variant_extras_do_not_change_base_cost():
+    gold = [item("стол | Цвет", "белый", "белый", "верно"), item("стол | Тип", "a", "", "отказ")]
+    extras = [item(f"стол | лишнее {n}", "ничего", "x", "лишнее") for n in range(5)]
+
+    clean = [p["base"] for p in pairs(gold, gold)]
+    noisy = pairs(gold, gold + extras)
+
+    assert cost(counts([p["base"] for p in noisy])) == cost(counts(clean)) == 0.5
+    assert cost(counts([p["variant"] for p in noisy])) == (1 + 5 * 2) / 2
 
 
 def test_wrong_costs_twice_a_refusal():
     assert cost(counts(["верно", "неверно"])) == 1
     assert cost(counts(["отказ"])) == 1
     assert cost(counts([])) == 0
+    assert cost(counts(["лишнее"])) == 0
 
 
 def test_base_against_itself_has_no_transitions():

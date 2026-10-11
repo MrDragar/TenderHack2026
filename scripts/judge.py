@@ -43,7 +43,10 @@ FUNCTIONS = {
     "narrow": "narrow",
 }
 # Молча неверный ответ хуже честного «не знаю»: вопрос стоит человеку одного действия.
-COST = {"верно": 0, "отказ": 1, "неверно": 2}
+# Лишнее и «нет» бывают только у ключей вне эталона. Знаменатель цены это число ожидаемых
+# ответов, как в доле ошибок по слотам: иначе лишнее варианта меняло бы цену бейзлайна.
+COST = {"верно": 0, "отказ": 1, "неверно": 2, "лишнее": 2, "нет": 0}
+EXPECTED = ("верно", "отказ", "неверно")
 SHOWN = 5
 # Ladder: на test число показываем, только если цена упала заметно, иначе подгоним под test.
 LADDER_STEP = 0.01
@@ -173,7 +176,7 @@ def link_items(link: Stage, ref: list[Position], _: Portal, test: bool) -> list[
             if f["name"] not in names:
                 got = described(f["name"], f["value"], f["kind"], f["rule"])
                 items.append(
-                    item(f"{example['text']} | лишнее {f['name']}", "ничего", got, "неверно")
+                    item(f"{example['text']} | лишнее {f['name']}", "ничего", got, "лишнее")
                 )
     return items
 
@@ -249,14 +252,14 @@ def numbered(items: list[Item]) -> dict[tuple[str, int], Item]:
 
 
 def joined(base: Item | None, variant: Item | None) -> Pair:
-    """Ключа нет у одной из сторон, если только она дала лишнее: значит, другая не ошиблась."""
+    """Ключа нет у одной из сторон, если только она дала лишнее: другая его не дала."""
     known = base or variant
     assert known is not None
     return {
         "key": known["key"],
         "expected": known["expected"],
-        "base": base["outcome"] if base else "верно",
-        "variant": variant["outcome"] if variant else "верно",
+        "base": base["outcome"] if base else "нет",
+        "variant": variant["outcome"] if variant else "нет",
         "base_got": base["got"] if base else "ничего",
         "variant_got": variant["got"] if variant else "ничего",
     }
@@ -270,7 +273,7 @@ def counts(outcomes: list[str]) -> dict[str, int]:
 
 
 def cost(side: dict[str, int]) -> float:
-    total = sum(side.values())
+    total = sum(side[o] for o in EXPECTED)
     return sum(COST[o] * n for o, n in side.items()) / total if total else 0.0
 
 
@@ -279,30 +282,35 @@ def report(stage: str, idea: str, found: list[Pair]) -> list[str]:
     variant = counts([p["variant"] for p in found])
     lines = [
         f"{stage} {idea}: {hypothesis(stage, idea)}",
-        f"{'':10}{'верно':>8}{'отказ':>8}{'неверно':>9}{'цена':>7}",
+        f"{'':10}{'верно':>8}{'отказ':>8}{'неверно':>9}{'лишнее':>8}{'цена':>7}",
         row("бейзлайн", base),
         row("вариант", variant),
         "",
         "Переходы: строка это бейзлайн, столбец это вариант",
         f"{'':10}{'верно':>8}{'отказ':>8}{'неверно':>9}",
     ]
-    for before in COST:
+    for before in EXPECTED:
         cells = []
-        for after in COST:
+        for after in EXPECTED:
             cells.append(sum(p["base"] == before and p["variant"] == after for p in found))
         lines.append(f"{before:10}{cells[0]:>8}{cells[1]:>8}{cells[2]:>9}")
     better = sum(COST[p["variant"]] < COST[p["base"]] for p in found)
     worse = sum(COST[p["variant"]] > COST[p["base"]] for p in found)
     lines += ["", f"Стало лучше {better}, хуже {worse}"]
     # Сначала самое дорогое: честный ответ стал уверенной ошибкой.
-    for before, after in (("отказ", "неверно"), ("верно", "неверно"), ("верно", "отказ")):
+    worst = (("отказ", "неверно"), ("верно", "неверно"), ("нет", "лишнее"), ("верно", "отказ"))
+    for before, after in worst:
         lines += listing(found, before, after)
-    lines += listing(found, "неверно", "верно") + listing(found, "отказ", "верно")
+    for before, after in (("неверно", "верно"), ("отказ", "верно"), ("лишнее", "нет")):
+        lines += listing(found, before, after)
     return lines
 
 
 def row(label: str, side: dict[str, int]) -> str:
-    return f"{label:10}{side['верно']:>8}{side['отказ']:>8}{side['неверно']:>9}{cost(side):>7.3f}"
+    return (
+        f"{label:10}{side['верно']:>8}{side['отказ']:>8}{side['неверно']:>9}"
+        f"{side['лишнее']:>8}{cost(side):>7.3f}"
+    )
 
 
 def listing(found: list[Pair], before: str, after: str) -> list[str]:
